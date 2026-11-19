@@ -672,6 +672,9 @@ int main(int argc, char** argv)
     setenv("NBT_HU_MODEL", "HU_NBT", 1);
     set_audio_mode();
     setenv("NBT_RX_TIMEOUT_S", "5", 1);
+    /* now playing (song / artist / state) for nbt_cluster's track line in the cluster / HUD */
+    setenv("NBT_NOWPLAYING_FILE", RUNTIME_DIR "/nowplaying", 1);
+    unlink("nowplaying");
     /* the car's master volume steers the Android Auto gain (nbt_knob -> "V" lines); aa-volume-off keeps 0 dB */
     setenv("NBT_AA_VOLUME", access("aa-volume-off", F_OK) ? "1" : "0", 1);
 
