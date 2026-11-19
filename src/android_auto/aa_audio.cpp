@@ -100,6 +100,15 @@ void setVolume(int percent)
     printf("AA_AUDIO volume %d%% -> %d dB\n", percent, db);
 }
 
+void onMic(bool open)
+{
+    if (!g_audio)
+        return;
+    if (open)
+        g_audio->onMicOpened();
+    else
+        g_audio->onMicClosed();
+}
 
 void shutdown()
 {

@@ -27,6 +27,9 @@ void shutdown();
 // is not attenuated by the car, so without this the steering-wheel / knob volume did nothing for Android Auto sound.
 // Any thread; ignored when audio is off. NBT_AA_VOLUME=0 (file aa-volume-off) keeps the gain fixed at 0 dB.
 void setVolume(int percent);
+// The phone opened (true) or closed (false) the car microphone (aa_mic). Browser mode asks for the browser source
+// again on close, in case the mic scenario moved the car off it (NBT-AAD BrowserAudio::onMicClosed). Main loop thread.
+void onMic(bool open);
 
 } // namespace aa_audio
 

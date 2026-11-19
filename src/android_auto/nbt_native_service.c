@@ -73,6 +73,114 @@ static long long ms(void)
  * Evaluated before every session, so a failed route falls back to Bluetooth from the next session on. */
 static unsigned long audio_conn; /* connection built for the current session, 0 = none (Bluetooth or unrouted) */
 
+/* First word of a small config file in the runtime directory (the working directory), only characters from `ok`.
+ * Returns 1 and fills out[n] when the file exists and its first word is usable. */
+static int read_word(const char* path, char* out, size_t n, const char* ok)
+{
+    FILE* f = fopen(path, "r");
+    size_t i = 0;
+    int c;
+    if (!f)
+        return 0;
+    while ((c = fgetc(f)) == ' ' || c == '\t')
+        ;
+    while (c != EOF && c != '\n' && c != '\r' && c != ' ' && c != '\t' && i + 1 < n) {
+        if (!strchr(ok, c)) {
+            i = 0;
+            break;
+        }
+        out[i++] = (char)c;
+        c = fgetc(f);
+    }
+    fclose(f);
+    out[i] = 0;
+    if (!i)
+        printf("config: %s ignored (empty or unexpected characters)\n", path);
+    return i > 0;
+}
+
+/* Car microphone for Android Auto (aa_mic.cpp) and the car's Bluetooth address (calls).
+ * Default (from the car's own firmware, HU_NBT 2.49 / 2.51: libioamp-router-config.so.1 and natp.cfg):
+ *   /output_mono_MIC_Prepro  mono, 44100 Hz: the router's preprocessed car-mic tap, which no stock program reads
+ *   fallback /output_multich_0  4 channels, 22050 Hz, channel 2 = Microphone Input 1 (what natp's hands-free reads)
+ * Optional files override it:
+ *   mic-endpoint  A2I capture endpoint (then no fallback)
+ *   mic-rate      "rate [channels [mic channel]]" for mic-endpoint, default 16000 1 1
+ *   mic-gain      gain in dB (-20..30), default 0
+ *   mic-scenario  natp audio scenario switched on while the phone has the mic open (NBT-AAD voice_scenario)
+ *   mic-off       no car mic for Android Auto
+ *   bt-addr       the car's Bluetooth address XX:XX:XX:XX:XX:XX: offered to the phone so Android Auto ties calls (and
+ *                 the phone screen) to the car's Bluetooth hands-free connection */
+static void set_mic_and_bluetooth(void)
+{
+    static const char kName[] = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_/.-";
+    static const char* const kVars[] = {"NBT_MIC_ENDPOINT", "NBT_MIC_RATE", "NBT_MIC_CHANNELS", "NBT_MIC_PICK",
+                                        "NBT_MIC_FALLBACK", "NBT_MIC_FALLBACK_RATE", "NBT_MIC_FALLBACK_CHANNELS",
+                                        "NBT_MIC_FALLBACK_PICK", "NBT_MIC_GAIN_DB", "NBT_MIC"};
+    char w[96];
+    size_t k;
+    for (k = 0; k < sizeof(kVars) / sizeof(kVars[0]); ++k)
+        unsetenv(kVars[k]);
+    if (!access("mic-off", F_OK)) {
+        setenv("NBT_MIC", "0", 1);
+        printf("mic: off (mic-off)\n");
+    } else if (read_word("mic-endpoint", w, sizeof(w), kName)) {
+        FILE* f = fopen("mic-rate", "r");
+        unsigned rate = 16000, ch = 1, pick = 1;
+        char v[16];
+        if (f) {
+            if (fscanf(f, "%u %u %u", &rate, &ch, &pick) < 1)
+                rate = 16000;
+            fclose(f);
+        }
+        setenv("NBT_MIC_ENDPOINT", w, 1);
+        snprintf(v, sizeof(v), "%u", rate);
+        setenv("NBT_MIC_RATE", v, 1);
+        snprintf(v, sizeof(v), "%u", ch);
+        setenv("NBT_MIC_CHANNELS", v, 1);
+        snprintf(v, sizeof(v), "%u", pick);
+        setenv("NBT_MIC_PICK", v, 1);
+        printf("mic: car microphone from %s (%u Hz x%u, channel %u; mic-endpoint)\n", w, rate, ch, pick);
+    } else {
+        setenv("NBT_MIC_ENDPOINT", "/output_mono_MIC_Prepro", 1);
+        setenv("NBT_MIC_RATE", "44100", 1);
+        setenv("NBT_MIC_CHANNELS", "1", 1);
+        setenv("NBT_MIC_PICK", "1", 1);
+        setenv("NBT_MIC_FALLBACK", "/output_multich_0", 1);
+        setenv("NBT_MIC_FALLBACK_RATE", "22050", 1);
+        setenv("NBT_MIC_FALLBACK_CHANNELS", "4", 1);
+        setenv("NBT_MIC_FALLBACK_PICK", "2", 1);
+        printf("mic: car microphone /output_mono_MIC_Prepro (fallback /output_multich_0 channel 2)\n");
+    }
+    {
+        FILE* f = fopen("mic-gain", "r");
+        int db = 0;
+        char v[16];
+        if (f) {
+            if (fscanf(f, "%d", &db) == 1 && db >= -20 && db <= 30) {
+                snprintf(v, sizeof(v), "%d", db);
+                setenv("NBT_MIC_GAIN_DB", v, 1);
+            }
+            fclose(f);
+        }
+    }
+    if (read_word("mic-scenario", w, sizeof(w), kName)) {
+        setenv("NBT_VOICE_SCENARIO", "1", 1);
+        setenv("NBT_VOICE_SCENARIO_NAME", w, 1);
+    } else {
+        setenv("NBT_VOICE_SCENARIO", "0", 1);
+        unsetenv("NBT_VOICE_SCENARIO_NAME");
+    }
+    unsetenv("NBT_BT_ADDR");
+    if (read_word("bt-addr", w, sizeof(w), "0123456789abcdefABCDEF:")) {
+        if (strlen(w) == 17 && w[2] == ':' && w[5] == ':' && w[8] == ':' && w[11] == ':' && w[14] == ':') {
+            setenv("NBT_BT_ADDR", w, 1);
+            printf("bluetooth: car address %s offered to the phone\n", w);
+        } else
+            printf("bluetooth: bt-addr ignored (expected XX:XX:XX:XX:XX:XX)\n");
+    }
+}
+
 static void set_audio_mode(void)
 {
     FILE* f;
@@ -671,6 +779,7 @@ int main(int argc, char** argv)
     setenv("NBT_CAR_YEAR", "2014", 1);
     setenv("NBT_HU_MODEL", "HU_NBT", 1);
     set_audio_mode();
+    set_mic_and_bluetooth();
     setenv("NBT_RX_TIMEOUT_S", "5", 1);
     /* now playing (song / artist / state) for nbt_cluster's track line in the cluster / HUD */
     setenv("NBT_NOWPLAYING_FILE", RUNTIME_DIR "/nowplaying", 1);

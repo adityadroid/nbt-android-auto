@@ -15,6 +15,7 @@
 //   AASession navigation callback --> nav_status() --> /fs/ram3/nbt-aa-native/nav.state
 #include "aa_video_capture.h"
 #include "aa_audio.hpp"
+#include "aa_mic.hpp"
 #include "aa_session.hpp"
 #include <sys/socket.h>
 #include <sys/select.h>
@@ -618,12 +619,14 @@ void stop_live(int)
 //
 // nbt_knob writes "R <key> <delta>" (rotary) / "K <key> <0|1>" (key up/down) lines into this FIFO.
 // Opened O_RDWR so the FIFO never reports EOF when nbt_knob is not running. Only the keys declared on input channel 7
-// are accepted: HOME 3, BACK 4, CALL 5, DPAD 19..23, SEARCH 84, ROTARY 65536, MEDIA 65537, NAVIGATION 65538.
+// are accepted: HOME 3, BACK 4, CALL 5, ENDCALL 6, DPAD 19..23, SEARCH 84 (Assistant), ROTARY 65536, MEDIA 65537,
+// NAVIGATION 65538.
 const char* const kInputFifo = "/fs/ram3/nbt-aa-native/input.fifo";
 
 bool allowed_key(unsigned k)
 {
-    return k == 3 || k == 4 || k == 5 || (k >= 19 && k <= 23) || k == 84 || k == 65536 || k == 65537 || k == 65538;
+    return k == 3 || k == 4 || k == 5 || k == 6 || (k >= 19 && k <= 23) || k == 84 || k == 65536 || k == 65537 || k == 65538 ||
+           k == 85 || k == 87 || k == 88; // media keys from the steering wheel (126 / 127 dropped the session: valinet fork)
 }
 
 struct InputLines {
@@ -744,6 +747,8 @@ extern "C" int nbt_video_capture_run(nbt_capture_transfer transfer, void* contex
         session.setVideoFocusCallback(focus_request, 0);
     }
     const bool audio = c.live && aa_audio::setup(session);
+    if (c.live)
+        aa_mic::setup(session);
     setenv("NBT_VID_RES", "1", 0); // 800x480 unless the service asks for 1280x720 (res720)
     printf("AA_VIDEO_CAPTURE_BEGIN max_seconds=%u max_bytes=8388608 max_frames=%u no_display=1 no_audio_playback=%d\n",
            seconds, c.frame_limit, audio ? 0 : 1);
@@ -818,6 +823,8 @@ extern "C" int nbt_video_capture_run(nbt_capture_transfer transfer, void* contex
             printf("AA_BYEBYE no answer within 1 s\n");
             break;
         }
+        if (c.live)
+            aa_mic::poll();
         if (!bye_until && g_refocus_at && now_ms() >= g_refocus_at) {
             g_refocus_at = 0;
             session.postVideoFocus(true);
@@ -863,6 +870,7 @@ extern "C" int nbt_video_capture_run(nbt_capture_transfer transfer, void* contex
         printf("AA_BYEBYE %s\n", session.isActive() ? "session still open: closing it" : "session ended cleanly");
     shutdown(c.socket, SHUT_RDWR);
     session.stop();
+    aa_mic::shutdown();
     aa_audio::shutdown(); // after the session thread ended: no more frames come in
     if (c.live)
         unlink("/fs/ram3/nbt-aa-native/nav.state");

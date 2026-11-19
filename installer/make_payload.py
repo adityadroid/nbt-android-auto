@@ -30,6 +30,7 @@ FILES = [
     (ENTRY / 'decode_runner', 'rt/decode_runner', RT + '/decode_runner', '700'),
     (ENTRY / 'nbt_cluster', 'rt/nbt_cluster', RT + '/nbt_cluster', '700'),
     (ENTRY / 'audioconn', 'rt/audioconn', RT + '/audioconn', '700'),   # nbt_audioconn (AA audio route, 2026-11-15)
+    (ENTRY / 'micprobe', 'rt/micprobe', RT + '/micprobe', '700'),     # car-mic endpoint test (aa_mic, 2026-11-19)
     (PROTO / 'accessory_window', 'rt/accessory_window', RT + '/accessory_window', '700'),
     (PROTO / 'fifo_http', 'rt/fifo_http', RT + '/fifo_http', '700'),
     (PROTO / 'cert.pem', 'rt/cert.pem', RT + '/cert.pem', '600'),
