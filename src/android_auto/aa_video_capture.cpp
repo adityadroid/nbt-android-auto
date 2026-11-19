@@ -623,6 +623,30 @@ void stop_live(int)
 // NAVIGATION 65538.
 const char* const kInputFifo = "/fs/ram3/nbt-aa-native/input.fifo";
 
+// Car day/night for Android Auto's night mode (dark maps at night), ported from valinet/nbt-android-auto: this NBT has no
+// day/night car data property, so the headlights stand in. The HMI plugin writes CDS controls.headlights to this file as
+// '{"headlights":N}'; 0 = day, anything else = night. Returns 1 night, 0 day, -1 unknown (keep what the phone has).
+const char* const kHeadlightsFile = "/fs/ram3/nbt-aa-headlights";
+int car_night()
+{
+    char b[96];
+    const int fd = open(kHeadlightsFile, O_RDONLY);
+    if (fd < 0)
+        return -1;
+    const ssize_t n = read(fd, b, sizeof(b) - 1);
+    close(fd);
+    if (n <= 0)
+        return -1;
+    b[n] = 0;
+    const char* p = strstr(b, "\"headlights\":");
+    if (!p)
+        return -1;
+    p += 13;
+    if (*p < '0' || *p > '9')
+        return -1;
+    return atoi(p) != 0 ? 1 : 0;
+}
+
 bool allowed_key(unsigned k)
 {
     return k == 3 || k == 4 || k == 5 || k == 6 || (k >= 19 && k <= 23) || k == 84 || k == 65536 || k == 65537 || k == 65538 ||
@@ -807,6 +831,8 @@ extern "C" int nbt_video_capture_run(nbt_capture_transfer transfer, void* contex
     // stopping, a ByeByeRequest goes out and the session keeps pumping both directions for up to 1 s until the phone's
     // ByeByeResponse ends it.
     long long bye_until = 0;
+    int night_posted = -1;
+    long long next_night_check = 0;
 
     // ---- main loop: socket pair -> USB, controller FIFO -> session, focus and shutdown handling ----
     while (start >= 0 && session.isActive()) {
@@ -825,6 +851,15 @@ extern "C" int nbt_video_capture_run(nbt_capture_transfer transfer, void* contex
         }
         if (c.live)
             aa_mic::poll();
+        if (c.live && !bye_until && now_ms() >= next_night_check) {
+            next_night_check = now_ms() + 1000;
+            const int n = car_night();
+            if (n >= 0 && n != night_posted) {
+                night_posted = n;
+                session.postNightMode(n != 0);
+                printf("AA_NIGHT car headlights %s: Android Auto %s\n", n ? "on" : "off", n ? "night (dark)" : "day");
+            }
+        }
         if (!bye_until && g_refocus_at && now_ms() >= g_refocus_at) {
             g_refocus_at = 0;
             session.postVideoFocus(true);

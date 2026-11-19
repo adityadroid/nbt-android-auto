@@ -71,6 +71,14 @@ void onKnob(const nbt::car::CcsEvent& ev, void*) {
         printf("[Knob] %s: leave Android Auto (iDrive key)\n", ev.what);
         return;
     }
+    // the same key while the picture is already hidden (reverse camera / parking view on screen): the driver chose
+    // iDrive, so the plugin must not bring Android Auto back when that view ends
+    if (!ev.keycode && ev.kind == 1 && ev.down && !ev.cancel) {
+        int fd = open("/fs/ram3/nbt-aa-leave", O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        if (fd >= 0) close(fd);
+        printf("[Knob] %s while Android Auto is hidden: no automatic return\n", ev.what);
+        return;
+    }
     if (!ev.keycode) return;
     const bool release = ev.kind == 1 && !ev.down;
     if (!release && access("/fs/ram3/nbt-aa-hidden", F_OK) == 0) {
