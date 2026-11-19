@@ -22,6 +22,9 @@ chmod 700 $R
 for f in native_service oneplus_native nbt_knob nbt_hwvideo decode_runner accessory_window fifo_http; do
   cp $P/$f $R/$f && chmod 700 $R/$f
 done
+# io-nme's global options as they are at boot, saved by decode_runner on its first start (2026-11-12, see
+# nbt_decode_runner.c): a new boot takes a new copy
+rm -f $R/nme-options.saved $R/nme-options.saved.tmp   # old location; the saved options now live in /fs/ram3 (one boot)
 cp $P/cert.pem $P/key.pem $P/ca.pem $R/ && chmod 600 $R/*.pem
 cp /opt/mm/bin/NmeCmdLine /opt/mm/lib/cinemo/cinemo_classes.xml /opt/mm/lib/cinemo/cinemo_links.xml $R/
 chmod 700 $R/NmeCmdLine
