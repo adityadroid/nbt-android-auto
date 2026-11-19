@@ -189,6 +189,15 @@ int main(int argc, char** argv) {
         ++h;
         usleep(2000000);
     }
+    // No acknowledgement at all after three attempts: VideoApp did not take the connection, the page would stay black
+    // ("connected" but no picture). Leave cleanly; native_service starts nbt_hwvideo again a little later.
+    if (!g_stop && !g_ack060 && !g_ackC01) {
+        printf("[hw] VideoApp never acknowledged the video connection: giving up (native_service retries)\n");
+        dmShow(false, height);
+        if (g_hmi && g_blankHmi) g_setv(g_hmi, kHmiWindow, 1);
+        fflush(stdout);
+        _exit(5);
+    }
     printf("[hw] video connection requested (rows %d -> DisplayManager 800x%d, viewport %d,%d,%d,%d)\n", rows, height,
            vp[0], vp[1], vp[2], vp[3]);
     // apply display settings repeatedly during the first 12 s (the Cinemo window and the WAL video window appear only

@@ -148,6 +148,64 @@ static void audio_route_cleanup(void)
         unlink("audio-route.built"); /* do not retry forever; the log keeps the answer */
 }
 
+/* ---- persistent event log ------------------------------------------------------------------------------------------
+ * /fs/ram3 is lost on every head-unit restart, so after an iDrive reboot nothing showed what happened before it. A few
+ * lines per session (start, end, how long, why) plus the tail of the HMI plugin's log are appended to the package
+ * directory on flash. Bounded: at 128 KB the file is moved to events.log.1 (one generation kept). Written only on
+ * session start/end and every 5 minutes while a session runs, so flash wear stays negligible. */
+#define PERSIST_DIR "/var/opt/hmi/data/rw/NbtAndroidAutoRT"
+#define PERSIST_LOG PERSIST_DIR "/events.log"
+
+static void plog_rotate(void)
+{
+    struct stat st;
+    if (!stat(PERSIST_LOG, &st) && st.st_size > 128 * 1024)
+        rename(PERSIST_LOG, PERSIST_LOG ".1");
+}
+
+static void plog_line(const char* fmt, const char* a, unsigned session)
+{
+    FILE* f;
+    time_t now = time(0);
+    char when[32];
+    plog_rotate();
+    f = fopen(PERSIST_LOG, "a");
+    if (!f)
+        return;
+    strftime(when, sizeof(when), "%Y-%m-%d %H:%M:%S", localtime(&now));
+    fprintf(f, "%s up=%llds session=%u ", when, ms() / 1000, session);
+    fprintf(f, fmt, a ? a : "");
+    fputc('\n', f);
+    fclose(f);
+}
+
+/* the last 3 KB of a RAM log, framed, into the persistent log */
+static void plog_tail(const char* path, const char* label)
+{
+    FILE *in, *out;
+    char buf[3072];
+    size_t n;
+    long size;
+    in = fopen(path, "r");
+    if (!in)
+        return;
+    fseek(in, 0, SEEK_END);
+    size = ftell(in);
+    fseek(in, size > (long)sizeof(buf) ? size - (long)sizeof(buf) : 0, SEEK_SET);
+    n = fread(buf, 1, sizeof(buf), in);
+    fclose(in);
+    plog_rotate();
+    out = fopen(PERSIST_LOG, "a");
+    if (!out)
+        return;
+    fprintf(out, "---- tail of %s ----\n", label);
+    fwrite(buf, 1, n, out);
+    if (n && buf[n - 1] != '\n')
+        fputc('\n', out);
+    fprintf(out, "---- end ----\n");
+    fclose(out);
+}
+
 /* ---- child processes ------------------------------------------------------------------------------------------- */
 
 typedef struct {
@@ -439,6 +497,24 @@ static void hmi_visible(void)
     (void)r;
 }
 
+/* nbt_hwvideo for one session; viewport x,y,w,h on the 1280x480 display: centred (240,0) or left edge (0,0, iDrive
+ * stays visible). restart > 0: a later attempt in the same session (own log file). */
+static Child start_hwvideo(int center, int right, unsigned session, unsigned restart)
+{
+    char* args[] = {"./nbt_hwvideo", "--rows", "480", center ? "--viewport" : 0,
+                    right ? "0,0,800,480" : "240,0,800,480", right ? "--keep-hmi" : 0, 0};
+    char hwname[48];
+    Child c;
+    if (restart)
+        snprintf(hwname, sizeof(hwname), "hwvideo-%u.%u.log", session, restart);
+    else
+        snprintf(hwname, sizeof(hwname), "hwvideo-%u.log", session);
+    setenv("LD_LIBRARY_PATH", SYSTEM_LIBRARY_PATH, 1);
+    c = spawn(args, 0, hwname);
+    setenv("LD_LIBRARY_PATH", CINEMO_LIBRARY_PATH, 1);
+    return c;
+}
+
 /* ---- main ------------------------------------------------------------------------------------------------------------ */
 
 int main(int argc, char** argv)
@@ -461,11 +537,60 @@ int main(int argc, char** argv)
     signal(SIGTERM, stopped);
     signal(SIGINT, stopped);
     signal(SIGPIPE, SIG_IGN);
-    /* one instance only */
-    lock = open("service.lock", O_WRONLY | O_CREAT | O_EXCL, 0600);
-    if (lock < 0)
-        return 2;
-    close(lock);
+    /* one instance only. The lock holds our pid: a lock left behind by an instance that was killed (SIGKILL, crash)
+     * used to block every later start until the head unit restarted ("service down" on the HMI page while a phone was
+     * plugged in). A lock whose pid no longer runs is taken over. */
+    /* The lock appears with our pid already in it (written to a private file, then link()ed: atomic), so another
+     * starter never sees an empty lock and mistakes it for stale (review 2026-11-19: boot.sh, the plugin's autostart
+     * and a restart could overlap). A stale lock is removed only if it still names the same dead pid. */
+    {
+        char tmp[48], pidtext[16];
+        int n = snprintf(pidtext, sizeof(pidtext), "%d\n", (int)getpid()), tries;
+        snprintf(tmp, sizeof(tmp), "service.lock.%d", (int)getpid());
+        lock = open(tmp, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+        if (lock < 0)
+            return 2;
+        if (write(lock, pidtext, (size_t)n) != n) {
+        }
+        close(lock);
+        for (tries = 0;; ++tries) {
+            int other = 0;
+            FILE* f;
+            if (link(tmp, "service.lock") == 0)
+                break;
+            if (errno != EEXIST && tries == 0) {
+                /* no hard links on this file system: the old way (create exclusively, then write the pid) */
+                int fd = open("service.lock", O_WRONLY | O_CREAT | O_EXCL, 0600);
+                if (fd >= 0) {
+                    if (write(fd, pidtext, (size_t)n) != n) {
+                    }
+                    close(fd);
+                    break;
+                }
+            }
+            if (errno != EEXIST || tries >= 2) {
+                unlink(tmp);
+                return 2;
+            }
+            f = fopen("service.lock", "r");
+            if (f) {
+                if (fscanf(f, "%d", &other) != 1)
+                    other = 0;
+                fclose(f);
+            }
+            if (other <= 0 || kill(other, 0) == 0 || errno != ESRCH) {
+                unlink(tmp);
+                return 2; /* running, or being created right now */
+            }
+            printf("service.lock of pid %d is stale: taking it over\n", other);
+            unlink("service.lock");
+        }
+        unlink(tmp);
+    }
+    /* stale FIFOs of a killed instance would make mkfifo fail below */
+    unlink("annexb.fifo");
+    unlink("raw.fifo");
+    plog_line("service start%s", 0, 0);
     if (mkfifo("annexb.fifo", 0600) || mkfifo("raw.fifo", 0600))
         goto done;
     /* keep a reader on raw.fifo open so a writer (shared Cinemo service in the old PNG mode) never gets SIGPIPE */
@@ -725,15 +850,8 @@ int main(int argc, char** argv)
             }
             /* the decoder already crops to the content rows (-vr), so the window is the plain 800x480 output;
              * viewport x,y,w,h on the 1280x480 display: centred (240,0) or left edge (0,0, iDrive stays visible) */
-            if (hw && !stopping) {
-                char* args[] = {"./nbt_hwvideo", "--rows", "480", center ? "--viewport" : 0,
-                                right ? "0,0,800,480" : "240,0,800,480", right ? "--keep-hmi" : 0, 0};
-                char hwname[40];
-                snprintf(hwname, sizeof(hwname), "hwvideo-%u.log", session);
-                setenv("LD_LIBRARY_PATH", SYSTEM_LIBRARY_PATH, 1);
-                hwv = spawn(args, 0, hwname);
-                setenv("LD_LIBRARY_PATH", CINEMO_LIBRARY_PATH, 1);
-            }
+            if (hw && !stopping)
+                hwv = start_hwvideo(center, right, session, 0);
         }
 
         /* step 4: the Android Auto session itself (old live mode: nbt_live_file, kept in 'http', runs all the time) */
@@ -751,13 +869,45 @@ int main(int argc, char** argv)
                 setenv("LD_LIBRARY_PATH", CINEMO_LIBRARY_PATH, 1);
             }
             report("running", session);
+            plog_line("session running (phone %s)", getenv("NBT_PHONE_ID"), session);
             {
-                long long began = ms();
+                long long began = ms(), last_hwv = ms(), last_persist = ms();
+                unsigned hwv_restarts = 0;
+                const char* why;
                 while (!stopping && alive(&capture) && alive(&http) &&
                        (live || (alive(&decoder) && (hw || alive(&frames))))) {
                     usleep(200000);
                     keep_reported(session);
+                    /* "connected, but no picture": nbt_hwvideo gives up (exit 5) when VideoApp never acknowledged the
+                     * video connection, or it died. The session and the phone are fine, so only the picture side is
+                     * started again (at most every 10 s, 6 times per session) instead of leaving a black page that
+                     * only a restart fixed. */
+                    /* only while the Android Auto page is on screen: every start takes VideoApp's sink (StopVideo, Set
+                     * source 0x16), which would interrupt the reverse camera or a DVD that made it give up */
+                    if (hw && !live && !alive(&hwv) && hwv_restarts < 6 && ms() - last_hwv >= 10000 &&
+                        access("/fs/ram3/nbt-aa-hidden", F_OK)) {
+                        char line[64];
+                        snprintf(line, sizeof(line), "%d", WIFEXITED(hwv.status) ? WEXITSTATUS(hwv.status) : -1);
+                        plog_line("nbt_hwvideo ended (exit %s): starting it again", line, session);
+                        hwv = start_hwvideo(center, right, session, ++hwv_restarts);
+                        last_hwv = ms();
+                    }
+                    if (ms() - last_persist >= 300000) {
+                        last_persist = ms();
+                        plog_line("session still running%s", 0, session);
+                    }
                 }
+                why = stopping ? "service stopping"
+                      : !alive(&capture) ? "Android Auto session ended (phone / USB / protocol)"
+                      : !alive(&http) ? "fifo_http ended"
+                      : "decoder ended";
+                {
+                    char line[160];
+                    snprintf(line, sizeof(line), "%s after %llds, picture restarts %u", why, (ms() - began) / 1000,
+                             hwv_restarts);
+                    plog_line("session end: %s", line, session);
+                }
+                plog_tail("/fs/ram3/nbt-aa-plugin.log", "HMI plugin log");
                 /* a session that ran for a minute was a good one: its end is not a failed attempt (review 2026-11-09:
                  * the counter was only reset by unplugging, so the third normal session end of a drive showed
                  * "replug the phone") */
@@ -822,6 +972,7 @@ done:
     unlink("raw.fifo");
     unlink("http.ready");
     unlink("service.lock");
+    plog_line("service stop%s", 0, session);
     report("stopped", session);
     unlink(HMI_STATE_FILE);
     return 0;

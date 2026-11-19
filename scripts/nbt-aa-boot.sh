@@ -10,7 +10,13 @@ LOG=/fs/ram3/nbt-aa-boot.log
 exec >> $LOG 2>&1
 echo "=== boot.sh `date`"
 if test -e $P/disabled; then echo 'disabled'; exit 0; fi
-if test -e $R/service.lock; then echo 'service already running (lock)'; exit 0; fi
+# the lock holds native_service's pid: a lock whose process is gone (killed / crashed) no longer blocks the start
+if test -e $R/service.lock; then
+  LP=`sed 1q $R/service.lock 2>/dev/null`
+  if test -n "$LP" && kill -0 $LP 2>/dev/null; then echo "service already running (lock, pid $LP)"; exit 0; fi
+  echo "stale service.lock (pid '$LP' not running): starting anyway"
+  rm -f $R/service.lock
+fi
 mkdir -p $R
 chmod 700 $R
 for f in native_service oneplus_native nbt_knob nbt_hwvideo decode_runner accessory_window fifo_http; do
