@@ -833,6 +833,12 @@ extern "C" int nbt_video_capture_run(nbt_capture_transfer transfer, void* contex
     long long bye_until = 0;
     int night_posted = -1;
     long long next_night_check = 0;
+    // Freeze watch (user report: "the Android Auto screen freezes sometimes"): no new video frame for 15 s while the
+    // page is on screen -> AA_STALL in this log and the flag file below; native_service saves an incident snapshot.
+    // (The phone may also send nothing for a still screen, so this is evidence for the log, not an action.)
+    unsigned stall_frames = 0;
+    long long stall_since = now_ms(), next_stall_check = 0;
+    bool stall_reported = false;
 
     // ---- main loop: socket pair -> USB, controller FIFO -> session, focus and shutdown handling ----
     while (start >= 0 && session.isActive()) {
@@ -851,6 +857,26 @@ extern "C" int nbt_video_capture_run(nbt_capture_transfer transfer, void* contex
         }
         if (c.live)
             aa_mic::poll();
+        if (c.live && !bye_until && now_ms() >= next_stall_check) {
+            next_stall_check = now_ms() + 1000;
+            pthread_mutex_lock(&c.mutex);
+            const unsigned f = c.frames;
+            pthread_mutex_unlock(&c.mutex);
+            const bool visible = access("/fs/ram3/nbt-aa-hidden", F_OK) != 0;
+            if (f != stall_frames || !visible) {
+                if (stall_reported && f != stall_frames)
+                    printf("AA_STALL ended: video again after %lld s\n", (now_ms() - stall_since) / 1000);
+                stall_frames = f;
+                stall_since = now_ms();
+                stall_reported = false;
+            } else if (!stall_reported && now_ms() - stall_since >= 15000) {
+                stall_reported = true;
+                printf("AA_STALL no video frame for 15 s while the page is on screen (frames %u)\n", f);
+                const int fd = open("/fs/ram3/nbt-aa-native/stall", O_WRONLY | O_CREAT | O_TRUNC, 0644);
+                if (fd >= 0)
+                    close(fd);
+            }
+        }
         if (c.live && !bye_until && now_ms() >= next_night_check) {
             next_night_check = now_ms() + 1000;
             const int n = car_night();
