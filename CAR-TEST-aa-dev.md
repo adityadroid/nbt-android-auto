@@ -45,11 +45,17 @@ writes `mfl.map` — no rebuild needed:
 nbt_knob reads `mfl.map`, `wheel-off` and `ptt-assistant` only when it starts: after changing them, restart the Android
 Auto service (Android Auto page -> restart) or the head unit.
 
-## 4. Logs to pull afterwards (Claude does this over SSH)
-- `/var/opt/hmi/data/rw/NbtAndroidAutoRT/events.log` — session start/end + reason, picture restarts, plugin log tail. Survives reboots.
-- `/var/opt/hmi/data/rw/NbtAndroidAutoRT/logs/` and `logs.prev/` — state changes, last capture/decoder/hwvideo logs.
-- `/fs/ram3/nbt-aa-plugin.log` — `CDS sensors.PDCStatus`, `parking assistant off: back to Android Auto`, `resume:` lines.
-- `/fs/ram3/nbt-aa-native/knob.log` — `[Wheel]` / `[MFL]` lines.
+## 4. Logs: pull after driving (no need to be connected while driving)
+The car keeps everything on flash: `events.log` (sessions, crashes, freezes, incidents), `incidents/` (a snapshot with
+the QNX system log each time something goes wrong: program crash, session end, no picture, freeze, replug, iDrive
+restart, service recovered, user restart; newest 40), `logs/` + `history/` (the last 15 head-unit boots).
+After a drive, ENET cable in, ignition on:
+```bash
+cd /Users/adityadroid/experiment/bmw && python3 scripts/nbt_pull_logs.py
+```
+It asks for the NBT root password once, saves everything to `.local/car-logs/<time>/` and prints `summary.md`
+(sessions and end reasons, incidents by kind, crashes / freezes, suspected reboots while Android Auto ran, error
+patterns). Read-only on the car. Tell Claude the folder name, or just "pull the logs".
 
 ## 5. Microphone, calls and voice
 
