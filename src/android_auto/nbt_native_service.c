@@ -76,7 +76,7 @@ static long long ms(void)
  * Evaluated before every session, so a failed route falls back to Bluetooth from the next session on. */
 static unsigned long audio_conn; /* connection built for the current session, 0 = none (Bluetooth or unrouted) */
 
-/* First word of a small config file in the runtime directory (the working directory), only characters from `ok`.
+/* First word of a small config file (full path), only characters from `ok`.
  * Returns 1 and fills out[n] when the file exists and its first word is usable. */
 static int read_word(const char* path, char* out, size_t n, const char* ok)
 {
@@ -324,11 +324,52 @@ static void plog_tail(const char* path, const char* label)
     fclose(out);
 }
 
+/* ---- incidents ----------------------------------------------------------------------------------------------------
+ * Something went wrong: incident.sh (package folder) saves a snapshot (state, RAM log tails, our processes, the QNX
+ * system log) to incidents/ and an INCIDENT line to events.log, so the logs can be pulled later from the Mac
+ * (scripts/nbt_pull_logs.py) without anybody being connected when it happened. Detached (double fork: never blocks the
+ * service, no zombie). The same kind is recorded at most once per min_gap_ms. */
+static unsigned g_incident_session;
+
+static void incident(const char* kind, const char* detail, long long min_gap_ms)
+{
+    static char kinds[8][24];
+    static long long last[8];
+    static unsigned nkinds;
+    unsigned i;
+    long long now = ms();
+    pid_t p;
+    for (i = 0; i < nkinds; ++i)
+        if (!strcmp(kinds[i], kind))
+            break;
+    if (i < nkinds && now - last[i] < min_gap_ms)
+        return;
+    if (i == nkinds && nkinds < 8)
+        snprintf(kinds[nkinds++], sizeof(kinds[0]), "%s", kind);
+    if (i < 8)
+        last[i] = now;
+    p = fork();
+    if (p == 0) {
+        if (fork() == 0) {
+            char session[16];
+            snprintf(session, sizeof(session), "%u", g_incident_session);
+            setpgid(0, 0);
+            execl("/bin/sh", "sh", PERSIST_DIR "/incident.sh", kind, session, detail ? detail : "", (char*)0);
+            _exit(127);
+        }
+        _exit(0);
+    }
+    if (p > 0)
+        while (waitpid(p, 0, 0) < 0 && errno == EINTR) {
+        }
+}
+
 /* ---- child processes ------------------------------------------------------------------------------------------- */
 
 typedef struct {
     pid_t pid; /* 0 = not running */
     int status;
+    const char* name; /* args[0], for incident reports */
 } Child;
 
 /* 1 while the child runs; reaps it (pid = 0) once it has ended */
@@ -342,6 +383,13 @@ static int alive(Child* c)
     if (r == c->pid) {
         c->pid = 0;
         c->status = s;
+        /* died by a signal we did not send (end() uses SIGTERM, then SIGKILL): a crash (SIGSEGV, SIGABRT, ...) */
+        if (WIFSIGNALED(s) && WTERMSIG(s) != SIGTERM && WTERMSIG(s) != SIGKILL) {
+            char d[96];
+            snprintf(d, sizeof(d), "%s died by signal %d", c->name ? c->name : "?", WTERMSIG(s));
+            plog_line("CRASH %s", d, g_incident_session);
+            incident("crash", d, 10000);
+        }
         return 0;
     }
     return r == 0;
@@ -368,7 +416,8 @@ static void end(Child* c)
 /* start args[0] in its own process group, stdin from input (or /dev/null), stdout+stderr to log (or /dev/null) */
 static Child spawn(char* const args[], const char* input, const char* log)
 {
-    Child c = {0, 0};
+    Child c = {0, 0, 0};
+    c.name = args[0];
     c.pid = fork();
     if (!c.pid) {
         int fd;
@@ -663,15 +712,16 @@ static Child start_hwvideo(int center, int right, unsigned session, unsigned res
 
 int main(int argc, char** argv)
 {
-    Child lease = {0, 0};   /* accessory_window: keeps the stock USB stack from claiming the phone */
-    Child http = {0, 0};    /* fifo_http (or nbt_live_file in the old shadow mode) */
-    Child decoder = {0, 0}; /* decode_runner -> NmeCmdLine */
-    Child frames = {0, 0};  /* old modes only: native_frames (PNG) or nbt_wal_present */
-    Child capture = {0, 0}; /* oneplus_native --capture-video: the Android Auto session */
-    Child knob = {0, 0};    /* nbt_knob: iDrive controller -> input.fifo */
-    Child hwv = {0, 0};     /* nbt_hwvideo: shows the video window in front of iDrive */
+    Child lease = {0, 0, 0};   /* accessory_window: keeps the stock USB stack from claiming the phone */
+    Child http = {0, 0, 0};    /* fifo_http (or nbt_live_file in the old shadow mode) */
+    Child decoder = {0, 0, 0}; /* decode_runner -> NmeCmdLine */
+    Child frames = {0, 0, 0};  /* old modes only: native_frames (PNG) or nbt_wal_present */
+    Child capture = {0, 0, 0}; /* oneplus_native --capture-video: the Android Auto session */
+    Child knob = {0, 0, 0};    /* nbt_knob: iDrive controller -> input.fifo */
+    Child hwv = {0, 0, 0};     /* nbt_hwvideo: shows the video window in front of iDrive */
     (void)argv;
     int guard = -1, lock = -1, bus, device, type, attempts = 0, resets = 0;
+    int recovered = 0; /* pid of a native_service whose stale lock we took over */
     long long absent_since = 0;
     int live = 0, wal = 0, gate = 0, hw = 0, res720 = 0, center = 0, ana = 0, right = 0; /* mode switches */
     unsigned session = 0;
@@ -728,6 +778,7 @@ int main(int argc, char** argv)
                 return 2; /* running, or being created right now */
             }
             printf("service.lock of pid %d is stale: taking it over\n", other);
+            recovered = other;
             unlink("service.lock");
         }
         unlink(tmp);
@@ -736,6 +787,11 @@ int main(int argc, char** argv)
     unlink("annexb.fifo");
     unlink("raw.fifo");
     plog_line("service start%s", 0, 0);
+    if (recovered) {
+        char d[64];
+        snprintf(d, sizeof(d), "the previous native_service (pid %d) had died", recovered);
+        incident("service-recovered", d, 0);
+    }
     if (mkfifo("annexb.fifo", 0600) || mkfifo("raw.fifo", 0600))
         goto done;
     /* keep a reader on raw.fifo open so a writer (shared Cinemo service in the old PNG mode) never gets SIGPIPE */
@@ -927,6 +983,8 @@ int main(int argc, char** argv)
         if (attempts > 0) {
             if (resets >= 3) {
                 report("replug_required", session);
+                g_incident_session = session;
+                incident("replug", "3 USB resets did not bring the phone back", 600000);
                 sleep(2);
                 continue;
             }
@@ -972,6 +1030,7 @@ int main(int argc, char** argv)
         report("connecting", session);
         ++attempts;
         ++session;
+        g_incident_session = session;
         report("starting_decoder", session);
         drain(guard);
         /* no leftover client of the shared io-nme from an earlier, abruptly ended session (only our own NmeCmdLine copy
@@ -1057,8 +1116,13 @@ int main(int argc, char** argv)
                         char line[64];
                         snprintf(line, sizeof(line), "%d", WIFEXITED(hwv.status) ? WEXITSTATUS(hwv.status) : -1);
                         plog_line("nbt_hwvideo ended (exit %s): starting it again", line, session);
+                        incident("no-picture", line, 60000);
                         hwv = start_hwvideo(center, right, session, ++hwv_restarts);
                         last_hwv = ms();
+                    }
+                    if (!unlink("stall")) { /* oneplus_native: no video for 15 s while the page was on screen */
+                        plog_line("FREEZE no video for 15 s while Android Auto was on screen%s", 0, session);
+                        incident("freeze", "no video frame for 15 s while the Android Auto page was on screen", 300000);
                     }
                     if (ms() - last_persist >= 300000) {
                         last_persist = ms();
@@ -1074,6 +1138,8 @@ int main(int argc, char** argv)
                     snprintf(line, sizeof(line), "%s after %llds, picture restarts %u", why, (ms() - began) / 1000,
                              hwv_restarts);
                     plog_line("session end: %s", line, session);
+                    if (!stopping)
+                        incident("session-end", line, 30000);
                 }
                 plog_tail("/fs/ram3/nbt-aa-plugin.log", "HMI plugin log");
                 /* a session that ran for a minute was a good one: its end is not a failed attempt (review 2026-11-09:
