@@ -192,7 +192,12 @@ int main(int argc, char** argv) {
         rc = 3;
     }
     if (op == 'b') {
+        char built[96];
+        snprintf(built, sizeof(built), "%s/audio-route.built", kRuntimeDir);
         if (rc == 0) { stateFile("audio-route.built", true, argv[2]); stateFile("audio-route.failed", false, 0); }
+        // a refused build of a connection we already hold (BrowserAudio's refocus after the phone closed the mic) is no
+        // reason to give up on Android Auto audio: before, it sent every later session of the drive to Bluetooth
+        else if (access(built, F_OK) == 0) printf("build of an already built connection refused: route kept\n");
         else stateFile("audio-route.failed", true, why);
     } else if (rc == 0) {
         stateFile("audio-route.built", false, 0);

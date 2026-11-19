@@ -95,8 +95,15 @@ static void set_audio_mode(void)
                 p++;
             if (*p && *p != '\n' && *p != '\r') {
                 unsigned long v = strtoul(p, &end, 0);
-                if (end != p && v <= 0xffff && (!*end || *end == '\n' || *end == '\r'))
-                    conn = v;
+                /* only 0 (unrouted) or a browser connection 0xb8..0xba: anything else (e.g. 0xf6 left behind by the
+                 * closed v0.9.0 package) is refused by audioconn, which marked the route failed and silently moved
+                 * every later session to Bluetooth */
+                if (end != p && (!*end || *end == '\n' || *end == '\r')) {
+                    if (v == 0 || (v >= 0xb8 && v <= 0xba))
+                        conn = v;
+                    else
+                        printf("audio: aa-audio connection 0x%lx ignored (only 0xb8..0xba), using 0xb8\n", v);
+                }
             }
         }
         fclose(f);
