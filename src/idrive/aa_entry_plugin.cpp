@@ -468,6 +468,11 @@ bmw::IPluginApp* create(bmw::IDispatcher& d,const char* name,const bmw::Bundle& 
         app->addHandler(kHoldState+i,kVisible,onHoldVisible);  // type 11 = VISIBLE, as BMW's ActiveSeating registers it
     }
     created=true;
+    // iDrive restarted without a head-unit boot (user report: "one time the entire iDrive rebooted"): /fs/ram3 survives
+    // an HMI restart, so a marker from an earlier load means HmiMain3D started again. boot.sh's watcher then saves an
+    // incident snapshot (QNX system log) for the next log pull.
+    if(access("/fs/ram3/nbt-aa-plugin-loaded",F_OK)==0){plog("HMI restarted: plugin loaded again in this boot");touch("/fs/ram3/nbt-aa-hmi-restart");}
+    touch("/fs/ram3/nbt-aa-plugin-loaded");
     touch(kHidden);   // nothing is shown before the page is opened
     {
         pthread_attr_t at; pthread_t th;
