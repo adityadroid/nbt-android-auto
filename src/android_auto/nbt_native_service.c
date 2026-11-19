@@ -41,6 +41,9 @@
 #include <time.h>
 
 #define RUNTIME_DIR "/fs/ram3/nbt-aa-native"
+/* the package folder on flash: switch and config files the user creates live here (native_service itself runs in
+ * RUNTIME_DIR, so relative names there would never see them) */
+#define PKG_DIR "/var/opt/hmi/data/rw/NbtAndroidAutoRT/"
 #define HMI_STATE_FILE "/fs/ram3/nbt-aa-state"
 #define HMI_REQUEST_FILE "/fs/ram3/nbt-aa-request"
 #define CINEMO_LIBRARY_PATH "/opt/mm/lib/cinemo:/opt/mm/lib:/lib:/usr/lib"
@@ -121,11 +124,11 @@ static void set_mic_and_bluetooth(void)
     size_t k;
     for (k = 0; k < sizeof(kVars) / sizeof(kVars[0]); ++k)
         unsetenv(kVars[k]);
-    if (!access("mic-off", F_OK)) {
+    if (!access(PKG_DIR "mic-off", F_OK)) {
         setenv("NBT_MIC", "0", 1);
         printf("mic: off (mic-off)\n");
-    } else if (read_word("mic-endpoint", w, sizeof(w), kName)) {
-        FILE* f = fopen("mic-rate", "r");
+    } else if (read_word(PKG_DIR "mic-endpoint", w, sizeof(w), kName)) {
+        FILE* f = fopen(PKG_DIR "mic-rate", "r");
         unsigned rate = 16000, ch = 1, pick = 1;
         char v[16];
         if (f) {
@@ -153,7 +156,7 @@ static void set_mic_and_bluetooth(void)
         printf("mic: car microphone /output_mono_MIC_Prepro (fallback /output_multich_0 channel 2)\n");
     }
     {
-        FILE* f = fopen("mic-gain", "r");
+        FILE* f = fopen(PKG_DIR "mic-gain", "r");
         int db = 0;
         char v[16];
         if (f) {
@@ -164,7 +167,7 @@ static void set_mic_and_bluetooth(void)
             fclose(f);
         }
     }
-    if (read_word("mic-scenario", w, sizeof(w), kName)) {
+    if (read_word(PKG_DIR "mic-scenario", w, sizeof(w), kName)) {
         setenv("NBT_VOICE_SCENARIO", "1", 1);
         setenv("NBT_VOICE_SCENARIO_NAME", w, 1);
     } else {
@@ -172,7 +175,7 @@ static void set_mic_and_bluetooth(void)
         unsetenv("NBT_VOICE_SCENARIO_NAME");
     }
     unsetenv("NBT_BT_ADDR");
-    if (read_word("bt-addr", w, sizeof(w), "0123456789abcdefABCDEF:")) {
+    if (read_word(PKG_DIR "bt-addr", w, sizeof(w), "0123456789abcdefABCDEF:")) {
         if (strlen(w) == 17 && w[2] == ':' && w[5] == ':' && w[8] == ':' && w[11] == ':' && w[14] == ':') {
             setenv("NBT_BT_ADDR", w, 1);
             printf("bluetooth: car address %s offered to the phone\n", w);
@@ -785,7 +788,7 @@ int main(int argc, char** argv)
     setenv("NBT_NOWPLAYING_FILE", RUNTIME_DIR "/nowplaying", 1);
     unlink("nowplaying");
     /* the car's master volume steers the Android Auto gain (nbt_knob -> "V" lines); aa-volume-off keeps 0 dB */
-    setenv("NBT_AA_VOLUME", access("aa-volume-off", F_OK) ? "1" : "0", 1);
+    setenv("NBT_AA_VOLUME", access(PKG_DIR "aa-volume-off", F_OK) ? "1" : "0", 1);
 
     /* ---- mode switches (files in the runtime directory) ---- */
     /* Old experimental mode: if shadow.path names a file under /fs/usb0/, nbt_live_file shadows that file with the live
