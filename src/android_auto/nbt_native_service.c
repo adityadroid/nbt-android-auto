@@ -672,6 +672,8 @@ int main(int argc, char** argv)
     setenv("NBT_HU_MODEL", "HU_NBT", 1);
     set_audio_mode();
     setenv("NBT_RX_TIMEOUT_S", "5", 1);
+    /* the car's master volume steers the Android Auto gain (nbt_knob -> "V" lines); aa-volume-off keeps 0 dB */
+    setenv("NBT_AA_VOLUME", access("aa-volume-off", F_OK) ? "1" : "0", 1);
 
     /* ---- mode switches (files in the runtime directory) ---- */
     /* Old experimental mode: if shadow.path names a file under /fs/usb0/, nbt_live_file shadows that file with the live

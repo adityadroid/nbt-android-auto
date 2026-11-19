@@ -84,6 +84,153 @@ void onKnob(const nbt::car::CcsEvent& ev, void*) {
     forward(line, (size_t)n);
 }
 
+// ---- steering wheel: volume and media keys (user report 2026-11-19: "steering-mounted controls for audio and track
+// change don't work") ---------------------------------------------------------------------------------------------------
+// Volume: Android Auto sound plays on the browser connection, which the car's master volume does not attenuate. The car's
+// master level is observed (FBlock 0x20 AudioMaster inst 00, fkt 0xC08 Status, 5 bytes 01 00 LEVEL 00 MAX; car-verified
+// in NBT-AAD car/volume_level.hpp: one message ~6 ms after each steering-wheel volume step) and sent to the session as
+// "V <percent> 0", which sets the Android Auto media gain. Copies only: the HMI still draws its own volume bar.
+// The last level is also kept in volume (RAM) so a new session starts at the right volume.
+const char* const kRouteBuilt = "/fs/ram3/nbt-aa-native/audio-route.built";
+const char* const kVolumeFile = "/fs/ram3/nbt-aa-native/volume";
+int g_volLevel = -1, g_volMax = -1;
+uint32_t g_volMs = 0;
+void onVolume(const nbt::most::View& m, void*) {
+    // main volume only (inst 00): other instances (rear-seat headphones of the 6FH entertainment, call volume, ...) must
+    // not change the Android Auto gain. Logged once each so the car log shows them.
+    static unsigned otherLogged = 0;
+    if (m.inst != 0x00) {
+        if (otherLogged < 5 && m.len >= 5) { ++otherLogged; printf("[Volume] 20/%02X level %u/%u ignored (not the main volume)\n", m.inst, m.data[2], m.data[4]); }
+        return;
+    }
+    if (m.len < 5) return;
+    const int lv = m.data[2], mx = m.data[4];
+    if (mx <= 0 || lv > mx) return;
+    if (lv == g_volLevel && mx == g_volMax && m.rxMs - g_volMs < 40) return;   // the same step, repeated within ms
+    g_volLevel = lv; g_volMax = mx; g_volMs = m.rxMs;
+    const int pct = lv * 100 / mx;
+    char line[32];
+    int n = snprintf(line, sizeof(line), "V %d 0\n", pct);
+    printf("[Volume] car level %d/%d -> Android Auto %d%%\n", lv, mx, pct);
+    forward(line, (size_t)n);
+    FILE* f = fopen("/fs/ram3/nbt-aa-native/volume.tmp", "w");
+    if (f) { fprintf(f, "%d\n", pct); fclose(f); rename("/fs/ram3/nbt-aa-native/volume.tmp", kVolumeFile); }
+}
+
+// Track keys: the steering-wheel buttons arrive on FBlock 0x15 (MFL) inst 02 (voice button fkt 0x512 and volume
+// fkt 0x401 are known; the skip keys' function ids are not yet known for this car). Every other 0x15 message is logged
+// (first 300) so one short drive with the button pressed shows the ids, and mfl.map in the package directory maps them:
+//   <fkt hex> <first data byte hex> <Android keycode>     e.g.  "0402 01 87"  (87 NEXT, 88 PREVIOUS, 85 PLAY/PAUSE)
+// A mapped media key is sent to the phone as a key tap only while Android Auto is the car's audio source (audio route
+// built); otherwise the button stays with iDrive alone (the phone already gets Bluetooth AVRCP in Bluetooth mode).
+// Call keys (5 CALL, 6 ENDCALL) and 84 (Assistant) are sent whenever Android Auto runs. They are copies: iDrive still
+// gets the button, and its Bluetooth hands-free answers / ends the call itself, so map them only if that does not work.
+struct MflKey { unsigned fkt, value, keycode; };
+MflKey g_mfl[16];
+int g_mflN = 0;
+unsigned g_mflLogged = 0;
+void loadMflMap() {
+    FILE* f = fopen("/var/opt/hmi/data/rw/NbtAndroidAutoRT/mfl.map", "r");
+    if (!f) { printf("[MFL] no mfl.map: steering-wheel track keys only logged\n"); return; }
+    char l[96];
+    while (g_mflN < 16 && fgets(l, sizeof(l), f)) {
+        unsigned a, b, c;
+        if (l[0] == '#' || sscanf(l, "%x %x %u", &a, &b, &c) != 3) continue;
+        if (c != 85 && c != 87 && c != 88 && c != 5 && c != 6 && c != 84) {   // 126 / 127 dropped sessions
+            printf("[MFL] keycode %u not allowed\n", c);
+            continue;
+        }
+        g_mfl[g_mflN].fkt = a; g_mfl[g_mflN].value = b; g_mfl[g_mflN].keycode = c; ++g_mflN;
+        printf("[MFL] fkt %03X value %02X -> Android key %u\n", a, b, c);
+    }
+    fclose(f);
+}
+// Steering-wheel roller (ported from valinet/nbt-android-auto; car trace on an original NBT, F30, 2026-11-12/17):
+// FBlock 0x15 inst 02, op Status, one byte; every message arrives twice (once per HMI receiver, ~1 ms apart):
+//   fkt C30  0x80 = one step up (NEXT 87), 0x7e = one step down (PREVIOUS 88), 0x7f = no step
+//   fkt C31  01 pressed / 00 released (PLAY_PAUSE 85)
+//   fkt 400  phone button: iDrive opens its contact list, scrolled with the same roller, so the roller stays with
+//            iDrive until it has been still for 4 s (the list's own timeout; nothing on MOST marks it closing).
+// The first C30 after start is a status report, not a turn (valinet: it skipped a song at boot). Keys go to the phone
+// only while Android Auto is the car's audio source (audio route built); iDrive always gets the roller too.
+// File wheel-off in the package folder switches this off.
+bool g_wheelOn = true, g_wheelPushDown = false, g_wheelSeenC30 = false;
+uint16_t g_wheelLastFkt = 0;
+uint8_t g_wheelLastVal = 0;
+uint32_t g_wheelLastMs = 0, g_listUntilMs = 0;
+const uint32_t kListHoldMs = 4000;
+void wheelKey(unsigned key, int down, const char* what) {
+    char line[32];
+    int n = snprintf(line, sizeof(line), "K %u %d\n", key, down);
+    printf("[Wheel->AA] %s %s", what, line);
+    forward(line, (size_t)n);
+}
+// true when the message was a roller / push / phone button message (handled here)
+bool onWheel(const nbt::most::View& m) {
+    if (!g_wheelOn || m.inst != 0x02 || m.op != 0xC || !m.len) return false;
+    const uint32_t t = m.rxMs;
+    if (m.fkt == 0x400) {
+        if (m.data[0] == 1) {
+            if ((int32_t)(g_listUntilMs - t) < (int32_t)kListHoldMs - 200)
+                printf("[Wheel] phone button: roller stays with iDrive (phone list) until 4 s without a turn\n");
+            g_listUntilMs = t + kListHoldMs;
+        }
+        return true;
+    }
+    if (m.fkt != 0xC30 && m.fkt != 0xC31) return false;
+    const uint8_t v = m.data[0];
+    if (m.fkt == g_wheelLastFkt && v == g_wheelLastVal && t - g_wheelLastMs < 40) return true;   // the second copy
+    g_wheelLastFkt = m.fkt; g_wheelLastVal = v; g_wheelLastMs = t;
+    if (m.fkt == 0xC30 && !g_wheelSeenC30) {
+        g_wheelSeenC30 = true;
+        printf("[Wheel] first roller status %02x after start: baseline only\n", v);
+        return true;
+    }
+    if ((int32_t)(g_listUntilMs - t) > 0) {
+        if (m.fkt == 0xC30) g_listUntilMs = t + kListHoldMs;
+        printf("[Wheel] %s %02x: phone list open, left to iDrive\n", m.fkt == 0xC30 ? "roller" : "push", v);
+        return true;
+    }
+    const bool aaSound = access(kRouteBuilt, F_OK) == 0;
+    if (m.fkt == 0xC30) {
+        const unsigned key = v == 0x80 ? 87 : (v == 0x7e ? 88 : 0);
+        if (!key) return true;
+        if (!aaSound) { printf("[Wheel] roller: Android Auto is not the audio source, left to iDrive\n"); return true; }
+        wheelKey(key, 1, key == 87 ? "WHEEL_UP" : "WHEEL_DOWN");
+        wheelKey(key, 0, key == 87 ? "WHEEL_UP" : "WHEEL_DOWN");
+    } else if (v == 1 && !g_wheelPushDown) {
+        if (!aaSound) return true;
+        g_wheelPushDown = true;
+        wheelKey(85, 1, "WHEEL_PUSH");
+    } else if (v == 0 && g_wheelPushDown) {
+        g_wheelPushDown = false;
+        wheelKey(85, 0, "WHEEL_PUSH");
+    }
+    return true;
+}
+
+void onMfl(const nbt::most::View& m, void*) {
+    if (m.fkt == 0x512 || m.fkt == 0x401) return;          // voice button (ccs_input) and volume (level above)
+    if (onWheel(m)) return;
+    if (g_mflLogged < 300) {
+        ++g_mflLogged;
+        printf("[MFL] 15/%02X fkt=%03X op=%X len=%u:", m.inst, m.fkt, m.op, (unsigned)m.len);
+        for (size_t i = 0; i < m.len && i < 12; ++i) printf(" %02x", m.data[i]);
+        printf("\n");
+    }
+    if (m.op != 0xC || !m.len) return;                      // Status only
+    for (int i = 0; i < g_mflN; ++i) {
+        if (g_mfl[i].fkt != m.fkt || g_mfl[i].value != m.data[0]) continue;
+        const bool media = g_mfl[i].keycode != 5 && g_mfl[i].keycode != 6 && g_mfl[i].keycode != 84;
+        if (media && access(kRouteBuilt, F_OK) != 0) { printf("[MFL] key %u: Android Auto is not the audio source, left to iDrive\n", g_mfl[i].keycode); return; }
+        char line[48];
+        int n = snprintf(line, sizeof(line), "K %u 1\nK %u 0\n", g_mfl[i].keycode, g_mfl[i].keycode);
+        printf("[MFL->AA] key %u\n", g_mfl[i].keycode);
+        forward(line, (size_t)n);
+        return;
+    }
+}
+
 // --trace: observe-only log of EVERY MOST message this client receives (header + first 48 payload bytes), to learn what the
 // HMI sends to VideoApp's VideoConnectionMaster / VideoSink when a stock video page opens. Nothing is ever sent.
 unsigned g_traced = 0;
@@ -176,9 +323,18 @@ int main(int argc, char** argv) {
     setenv("NBT_KEY_NAV", "0", 0);
     setenv("NBT_KEY_MAP", "0", 0);
 
+    // Steering-wheel voice button: a long press (>= 750 ms) also sends the Assistant key (84) to the phone when the
+    // package folder has ptt-assistant. Off by default: iDrive's own long press already starts the phone's voice
+    // assistant over Bluetooth, and both together would start it twice.
+    if (!access("/var/opt/hmi/data/rw/NbtAndroidAutoRT/ptt-assistant", F_OK)) setenv("NBT_PTT_ASSISTANT", "1", 1);
+    g_wheelOn = access("/var/opt/hmi/data/rw/NbtAndroidAutoRT/wheel-off", F_OK) != 0;
     static nbt::most::Client most;
     static nbt::car::CcsInput ccs;
     if (!ccs.attach(most, nbt::car::readCcsConfig(), &onKnob, NULL)) return 3;
+    loadMflMap();
+    if (!most.addRoute(0x20, nbt::most::kAny, 0xC08, nbt::most::kOpStatus, &onVolume, NULL) ||
+        !most.addRoute(0x15, nbt::most::kAny, nbt::most::kAny, nbt::most::kAny, &onMfl, NULL))
+        printf("[Knob] no room on the MOST client: steering-wheel volume / track keys disabled\n");
     if (trace && !most.setTap(&onTap, NULL)) return 3;
     if (!most.start("NBTPROJ_KNOB")) return 3;
     printf("nbt_knob: observing the iDrive controller, forwarding to %s%s\n", g_fifo, seconds ? "" : " until SIGTERM");

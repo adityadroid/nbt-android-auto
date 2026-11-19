@@ -648,7 +648,9 @@ void handle_input(int fd, InputLines& in, nbt::AASession& session)
             char kind = 0;
             unsigned key = 0;
             int value = 0;
-            if (sscanf(start, "%c %u %d", &kind, &key, &value) == 3 && allowed_key(key)) {
+            if (sscanf(start, "%c %u %d", &kind, &key, &value) == 3 && kind == 'V' && key <= 100)
+                aa_audio::setVolume((int)key); // "V <percent> 0": the car's master volume (nbt_knob)
+            else if (sscanf(start, "%c %u %d", &kind, &key, &value) == 3 && allowed_key(key)) {
                 if (kind == 'R' && key == 65536 && value >= -20 && value <= 20 && value)
                     session.postRelativeEvent(key, value);
                 else if (kind == 'K' && (value == 0 || value == 1))
