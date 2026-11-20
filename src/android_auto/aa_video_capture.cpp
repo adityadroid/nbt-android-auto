@@ -380,9 +380,10 @@ struct Capture {
     int error;
     size_t bytes;
     unsigned frames, configs, frame_limit;
+    unsigned received; // every video frame from the phone, both modes (freeze watch; frames counts capture mode only)
     bool live;
     LiveQueue queue;
-    Capture() : socket(-1), data(-1), index(-1), error(0), bytes(0), frames(0), configs(0), frame_limit(300), live(false)
+    Capture() : socket(-1), data(-1), index(-1), error(0), bytes(0), frames(0), configs(0), frame_limit(300), received(0), live(false)
     {
         pthread_mutex_init(&mutex, 0);
     }
@@ -489,6 +490,8 @@ void save(Capture* c, const uint8_t* p, size_t n, uint64_t pts, bool config)
         if (!annexb || n > 2 * 1024 * 1024 || (!c->live && n > 8 * 1024 * 1024 - c->bytes))
             c->error = 1;
         else {
+            if (!config)
+                ++c->received;
             char row[160];
             int k = snprintf(row, sizeof(row), "%s,%u,%llu,%u,%u\n", config ? "config" : "frame", c->frames,
                              (unsigned long long)pts, (unsigned)c->bytes, (unsigned)n);
@@ -860,7 +863,8 @@ extern "C" int nbt_video_capture_run(nbt_capture_transfer transfer, void* contex
         if (c.live && !bye_until && now_ms() >= next_stall_check) {
             next_stall_check = now_ms() + 1000;
             pthread_mutex_lock(&c.mutex);
-            const unsigned f = c.frames;
+            // received, not frames: in live mode frames stays 0 (car 2026-11-20: every session reported false freezes)
+            const unsigned f = c.received;
             pthread_mutex_unlock(&c.mutex);
             const bool visible = access("/fs/ram3/nbt-aa-hidden", F_OK) != 0;
             if (f != stall_frames || !visible) {
