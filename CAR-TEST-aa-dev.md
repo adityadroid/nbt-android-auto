@@ -87,7 +87,8 @@ keycode `5` (answer) / `6` (end). If anything misbehaves: `touch mic-off` and re
 - `no-hud-track` — no track line in the cluster.
 - `wheel-off` — steering roller stays with iDrive only.
 - `mic-off` — no car mic for Android Auto.
-- `mic-endpoint`, `mic-rate`, `mic-gain`, `mic-scenario` — override the mic input (see §5).
+- `mic-endpoint`, `mic-rate`, `mic-gain` — override the mic input (see §5).
+- `mic-scenario` — the car mic is switched on with a natp audio scenario while the phone listens (on by default); write `off` to disable, or another scenario name.
 - `bt-addr` — the car's Bluetooth address `XX:XX:XX:XX:XX:XX`, offered to the phone.
 - `ptt-assistant` — long press of the steering-wheel voice button also sends the Assistant key over the cable.
 

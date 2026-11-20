@@ -167,12 +167,17 @@ static void set_mic_and_bluetooth(void)
             fclose(f);
         }
     }
+    /* The car mic only delivers sound while a natp audio scenario is active (car 2026-11-20: with the scenario off the
+     * Assistant heard silence, peak 0..5 on both mic inputs; NBT-AAD found the same in 2026-10 and made it default on).
+     * So it is on by default with NBT-AAD's built-in scenario name; mic-scenario = "off" disables it, any other word
+     * names a different scenario. */
+    unsetenv("NBT_VOICE_SCENARIO_NAME");
+    setenv("NBT_VOICE_SCENARIO", "1", 1);
     if (read_word(PKG_DIR "mic-scenario", w, sizeof(w), kName)) {
-        setenv("NBT_VOICE_SCENARIO", "1", 1);
-        setenv("NBT_VOICE_SCENARIO_NAME", w, 1);
-    } else {
-        setenv("NBT_VOICE_SCENARIO", "0", 1);
-        unsetenv("NBT_VOICE_SCENARIO_NAME");
+        if (!strcmp(w, "off"))
+            setenv("NBT_VOICE_SCENARIO", "0", 1);
+        else
+            setenv("NBT_VOICE_SCENARIO_NAME", w, 1);
     }
     unsetenv("NBT_BT_ADDR");
     if (read_word(PKG_DIR "bt-addr", w, sizeof(w), "0123456789abcdefABCDEF:")) {
