@@ -53,7 +53,16 @@ struct AACryptor::State {
                 memcmp(digest, s->peer_digest, sizeof(digest)) != 0)
                 *flags |= MBEDTLS_X509_BADCERT_OTHER;
         }
-        /* Never clear chain, expiry, key-usage or other verification failures. */
+        /* Expiry is ignored, nothing else (car 2026-11-20, wireless Android Auto adapter: its first handshakes showed
+         * a CarService certificate that expired 2026-03-18, flags 0x1, and the session failed until, minutes later,
+         * a newer certificate came; factory head units accept these, and the head unit clock can be wrong too). The
+         * certificate must still chain to the Google Automotive Link CA with a valid signature and key usage. */
+        const uint32_t kTime = MBEDTLS_X509_BADCERT_EXPIRED | MBEDTLS_X509_BADCERT_FUTURE;
+        if (*flags & kTime) {
+            printf("[TLS] depth %d: certificate outside its validity dates - accepted (expiry is not checked)\n", depth);
+            *flags &= ~kTime;
+        }
+        /* Never clear chain, signature, key-usage or other verification failures. */
         return 0;
     }
     ~State() {
