@@ -81,6 +81,7 @@ void _ZN3bmw9PluginAppC1ERNS_11IDispatcherENS_11BasicStringIcEERKNS_6BundleES7_(
 void _ZN3bmw9PluginAppD1Ev(void) {}
 void _ZNK3bmw6Parcel8readBoolERb(void) {}
 void _ZN3bmw9PluginApp33cdsAddPropertyChangedEventHandlerERNS_11BasicStringIcEEjRKNS_8DelegateIbRKNS1_ItEEvvvEE(void) {}
+void _ZN3bmw9PluginApp19cdsGetPropertyAsyncERNS_11BasicStringIcEERKNS_8DelegateIbRKNS1_ItEEvvvEE(void) {}
 EOS
   echo 'void _ZN3bmw6TextIDC1Ej(void) {}' > $S/core.c
   printf 'void _Znwj(void) {}\nvoid _ZdlPv(void) {}\nvoid __cxa_pure_virtual(void) {}\n' > $S/cpp.c

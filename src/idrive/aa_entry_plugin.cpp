@@ -57,6 +57,8 @@ public:
     void addHandler(unsigned,unsigned,const ActionDelegate&);
     // car data (CDS) property change handler; this car's libAppFramework.A.so (valinet/nbt-android-auto, 2026-11-17)
     void cdsAddPropertyChangedEventHandler(BasicString<char>&,unsigned,const CdsDelegate&);
+    // one-off read of a car data property (same delegate type); in this car's firmware too (swfl_00001289)
+    void cdsGetPropertyAsync(BasicString<char>&,const CdsDelegate&);
 private:
     uint32_t opaque_[1024];
 };
@@ -267,6 +269,140 @@ void cdsSubscribe(bmw::PluginApp* app) {
     app->cdsAddPropertyChangedEventHandler(h,0,dh);
     plog("CDS handlers for sensors.PDCStatus and controls.headlights registered",0);
 }
+// --- car data probe (PLAN-diagnostics.md, phase 1) -------------------------------------------------------------------
+// Off unless the flag file kProbeFlag exists. Then, at the first opening of the Android Auto page (same moment as
+// cdsSubscribe), every name in kProbeList (or the built-in list) is read once (cdsGetPropertyAsync) and subscribed
+// (cdsAddPropertyChangedEventHandler). Values go to kProbeLog as "<monotonic s.ms> <name> <get|chg> <json>": only
+// changes, at most one line per name per second (the newest value is written by probeFlush on the next 1 s tick), and
+// the log stops at kProbeLogCap. The file name starts with nbt-aa- so scripts/nbt_pull_logs.py picks it up.
+// Crash guard: the name being subscribed is written to kProbeTrying first. If HmiMain3D dies there, /fs/ram3 survives
+// the HMI restart, the file is still there at the next attempt and the probe stays off for the rest of this boot.
+// Both CDS symbols are in this car's firmware (swfl_00001289 libAppFramework strings, checked 2026-11-20).
+const char* const kProbeFlag="/var/opt/hmi/data/rw/NbtAndroidAutoRT/cds-probe";
+const char* const kProbeList="/var/opt/hmi/data/rw/NbtAndroidAutoRT/cds-probe.list";
+const char* const kProbeLog="/fs/ram3/nbt-aa-cds-probe.log";
+const char* const kProbeTrying="/fs/ram3/nbt-aa-cds-probe-trying";
+const long kProbeLogCap=1024*1024;
+// Guesses from the BMW Connected app's CDS list plus names proven on NBT cars; the probe tells which exist here.
+// No VIN and no GPS position on purpose (the log leaves the car).
+const char* const kProbeDefault[]={
+    "driving.speedActual","driving.speedDisplayed","driving.odometer","driving.gear","driving.mode","driving.mode35up",
+    "driving.averageConsumption","driving.averageSpeed","driving.accelerator","driving.acceleration",
+    "driving.brakeContact","driving.parkingBrake","driving.keyPosition","driving.steeringWheel","driving.DSCActive",
+    "driving.ecoRangeWon","driving.drivingStyle","driving.shiftIndicator","driving.range",
+    "engine.RPMSpeed","engine.temperature","engine.torque","engine.consumption","engine.info","engine.starter",
+    "engine.oilLevel",
+    "sensors.battery","sensors.batteryTemp","sensors.fuel","sensors.temperatureExterior","sensors.temperatureInterior",
+    "sensors.humidity","sensors.PDCStatus","sensors.PDCRangeFront","sensors.PDCRangeRear",
+    "controls.headlights","controls.lights","controls.startStopStatus","controls.wiperSpeed","controls.sunroof",
+    "climate.ACMode","climate.ACSystemTemperatures","climate.airConditionerCompressor",
+    "vehicle.serviceRequired","vehicle.checkControlMessages","vehicle.type","vehicle.units","vehicle.unitSpeed",
+    "vehicle.dayNightChangeOver","vehicle.time","vehicle.country",
+    "communication.callStatus0","navigation.guidanceStatus",0};
+const unsigned kProbeMax=96;
+struct ProbeSlot { char name[64]; char last[512]; char pending[512]; long long lastMs; bool hasPending; unsigned changes; };
+ProbeSlot g_probe[kProbeMax];
+unsigned g_probeN=0;
+bool g_probeDone=false, g_probeFull=false;
+bool sameText(const char* a,const char* b) { while(*a&&*a==*b){++a;++b;} return *a==*b; }
+void copyText(char* d,const char* s,size_t size) { size_t i=0; while(s[i]&&i<size-1){d[i]=s[i];++i;} d[i]=0; }
+bool hasVin(const char* s) { for(;*s;++s) if(s[0]=='V'&&s[1]=='I'&&s[2]=='N') return true; return false; }
+void probeWrite(const char* name,const char* kind,const char* text) {
+    if(g_probeFull)return;
+    struct stat st;
+    if(stat(kProbeLog,&st)==0&&st.st_size>kProbeLogCap){g_probeFull=true;plog("CDS probe: log full, stopped");return;}
+    int fd=open(kProbeLog,O_WRONLY|O_CREAT|O_APPEND,0644);
+    if(fd<0)return;
+    struct timespec t; clock_gettime(CLOCK_MONOTONIC,&t);
+    char line[700]; int n=snprintf(line,sizeof(line),"%ld.%03ld %s %s %s\n",(long)t.tv_sec,t.tv_nsec/1000000,name,kind,text);
+    if(n>(int)sizeof(line)-1)n=(int)sizeof(line)-1;
+    if(n>0&&write(fd,line,(size_t)n)<0){}
+    close(fd);
+}
+void probeValue(ProbeSlot* s,const bmw::BasicString<unsigned short>& v,bool get) {
+    if(!s)return;
+    char text[512];cdsText(v,text,sizeof(text));
+    if(hasVin(text))copyText(text,"(contains VIN, not logged)",sizeof(text));
+    if(get){probeWrite(s->name,"get",text);return;}
+    if(sameText(text,s->last)&&!s->hasPending)return;
+    ++s->changes;
+    const long long tm=now_ms();
+    if(tm-s->lastMs>=1000){copyText(s->last,text,sizeof(s->last));s->lastMs=tm;s->hasPending=false;probeWrite(s->name,"chg",text);}
+    else{copyText(s->pending,text,sizeof(s->pending));s->hasPending=true;}
+}
+bool onProbeChange(void* self,const bmw::BasicString<unsigned short>& v){probeValue(static_cast<ProbeSlot*>(self),v,false);return true;}
+bool onProbeGet(void* self,const bmw::BasicString<unsigned short>& v){probeValue(static_cast<ProbeSlot*>(self),v,true);return true;}
+// called by Background once a second: writes values held back by the 1 s limit
+void probeFlush() {
+    const long long tm=now_ms();
+    for(unsigned i=0;i<g_probeN;++i){
+        ProbeSlot& s=g_probe[i];
+        if(!s.hasPending||tm-s.lastMs<1000)continue;
+        s.hasPending=false;s.lastMs=tm;
+        if(sameText(s.pending,s.last))continue;
+        copyText(s.last,s.pending,sizeof(s.last));
+        probeWrite(s.name,"chg",s.pending);
+    }
+}
+void probeAdd(const char* name,size_t len) {
+    if(g_probeN>=kProbeMax||len==0||len>=sizeof(g_probe[0].name))return;
+    ProbeSlot& s=g_probe[g_probeN];
+    memset(&s,0,sizeof(s));
+    for(size_t i=0;i<len;++i)s.name[i]=name[i];
+    s.name[len]=0;
+    s.lastMs=-100000;
+    if(hasVin(s.name))return;
+    ++g_probeN;
+}
+// list file: one name per line, '#' starts a comment line; without the file the built-in list is used
+void probeLoadNames() {
+    g_probeN=0;
+    char buf[4096];
+    int fd=open(kProbeList,O_RDONLY);
+    if(fd>=0){
+        ssize_t n=read(fd,buf,sizeof(buf)-1);close(fd);
+        if(n>0){
+            buf[n]=0;
+            char* p=buf;
+            while(*p){
+                while(*p==' '||*p=='\t'||*p=='\r'||*p=='\n')++p;
+                char* b=p;
+                while(*p&&*p!='\n'&&*p!='\r'&&*p!=' '&&*p!='\t')++p;
+                if(*b&&*b!='#')probeAdd(b,(size_t)(p-b));
+                while(*p&&*p!='\n')++p;
+            }
+            if(g_probeN)return;
+        }
+    }
+    for(unsigned i=0;kProbeDefault[i];++i){size_t l=0;while(kProbeDefault[i][l])++l;probeAdd(kProbeDefault[i],l);}
+}
+void probeStart(bmw::PluginApp* app) {
+    if(g_probeDone||!app||access(kProbeFlag,F_OK)!=0)return;
+    g_probeDone=true;
+    if(access(kProbeTrying,F_OK)==0){
+        char name[80]="?";int fd=open(kProbeTrying,O_RDONLY);
+        if(fd>=0){ssize_t n=read(fd,name,sizeof(name)-1);close(fd);if(n>0)name[n]=0;}
+        probeWrite("probe","off","HMI died while subscribing the name below; probe stays off until the next boot");
+        probeWrite("probe","died-at",name);
+        plog("CDS probe: earlier HMI start died while subscribing, probe off");
+        return;
+    }
+    probeLoadNames();
+    char head[64];snprintf(head,sizeof(head),"%u names",g_probeN);
+    probeWrite("probe","start",head);
+    plog("CDS probe: subscribing names",(int)g_probeN);
+    for(unsigned i=0;i<g_probeN;++i){
+        ProbeSlot* s=&g_probe[i];
+        int fd=open(kProbeTrying,O_WRONLY|O_CREAT|O_TRUNC,0644);
+        if(fd>=0){size_t l=0;while(s->name[l])++l;if(write(fd,s->name,l)<0){}close(fd);}
+        bmw::BasicString<char> n(s->name);
+        bmw::CdsDelegate get={s,&onProbeGet},chg={s,&onProbeChange};
+        app->cdsGetPropertyAsync(n,get);
+        app->cdsAddPropertyChangedEventHandler(n,0,chg);
+    }
+    unlink(kProbeTrying);
+    probeWrite("probe","subscribed","all");
+}
 // sends focus event 53 (back to page 10) after a mode choice
 class BackToEntry : public bmw::Runnable {
 public:
@@ -362,6 +498,7 @@ public:
                 plog("entry by the driver: loop guard reset",(int)e->holds);e->holds=0;e->window=now_s();e->lastGuardReset=now_s();}
             if(!e->background.started&&e->app){e->background.started=true;e->app->post(&e->background,1000);}
             cdsSubscribe(e->app);   // once: parking assistant return, night mode
+            probeStart(e->app);     // once, only with the cds-probe flag file (PLAN-diagnostics.md)
             if(readStatus(&e->running)==kTxtServiceDown)launchService();   // service not running: start it now
             e->startPolling(50);if(e->running)e->check(30);
         }
@@ -435,6 +572,7 @@ void Background::run() {
     }
     readStatus(&e->running);
     if(!e->running)e->wantFront=false;     // no session: nothing to resume
+    probeFlush();
     e->app->post(this,1000);
 }
 void Verifier::run() {
@@ -485,6 +623,7 @@ bmw::IPluginApp* create(bmw::IDispatcher& d,const char* name,const bmw::Bundle& 
 void destroy(bmw::IPluginApp* p) {
     if(!created)return;
     g_cdsDone=false;   // a new create() gets a new app: subscribe again
+    g_probeDone=false;
     entry.stopping=true;
     touch(kHidden);
     entry.checker.e=0;entry.verifier.e=0;entry.back.app=0;entry.background.e=0;
