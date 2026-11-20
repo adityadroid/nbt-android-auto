@@ -169,9 +169,12 @@ static void set_mic_and_bluetooth(void)
     }
     /* The car mic only delivers sound while a natp audio scenario is active (car 2026-11-20: with the scenario off the
      * Assistant heard silence, peak 0..5 on both mic inputs; NBT-AAD found the same in 2026-10 and made it default on).
-     * So it is on by default with NBT-AAD's built-in scenario name; mic-scenario = "off" disables it, any other word
+     * So it is on by default with the scenario named below; mic-scenario = "off" disables it, any other word
      * names a different scenario. */
-    unsetenv("NBT_VOICE_SCENARIO_NAME");
+    /* NBT-AAD's built-in name, Carplay_Siri_1mic, is from the NBT Evo: the original NBT refused it (car 2026-11-20,
+     * AddAmxAudioScenario result 1). This car's /opt/speech/bin/natp.cfg has AmxHandsfree_Siri (the CarPlay Siri
+     * mode: mics on /output_multich_0, the input the fallback already reads) and AmxHandsfreeRefCh_Siri. */
+    setenv("NBT_VOICE_SCENARIO_NAME", "AmxHandsfree_Siri", 1);
     setenv("NBT_VOICE_SCENARIO", "1", 1);
     if (read_word(PKG_DIR "mic-scenario", w, sizeof(w), kName)) {
         if (!strcmp(w, "off"))
