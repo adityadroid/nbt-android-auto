@@ -8,7 +8,9 @@
 # everything else: it never stops or changes a process.
 P=/var/opt/hmi/data/rw/NbtAndroidAutoRT
 R=/fs/ram3/nbt-aa-native
-K=`echo "${1:-unknown}" | tr -cd 'a-z0-9-'`
+# sed, not tr: QNX tr takes 'a-z' literally (car 2026-11-20: "freeze" became "z", "session-end" became "-")
+K=`echo "${1:-unknown}" | sed 's/[^a-z0-9-]//g'`
+test -n "$K" || K=unknown
 S=${2:-0}
 if test $# -ge 2; then shift 2; else shift $#; fi
 D=$P/incidents
