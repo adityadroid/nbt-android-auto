@@ -14,6 +14,7 @@
 #include "volume.hpp"
 #include <stdio.h>
 #include <stdlib.h>
+#include <unistd.h>
 
 namespace {
 
@@ -98,6 +99,14 @@ void setVolume(int percent)
     const float gain = percent ? nbt::volumeDbToGain(db) : 0.0f;
     g_audio->setMediaGain(gain);
     printf("AA_AUDIO volume %d%% -> %d dB\n", percent, db);
+}
+
+void poll()
+{
+    if (!g_audio || unlink("/fs/ram3/nbt-aa-native/route-lost") != 0)
+        return;
+    // nbt_knob saw connection b8 vanish from the car's table: build it again (only if the route is meant to be up)
+    g_audio->refocus("car dropped connection b8");
 }
 
 void onMic(bool open)

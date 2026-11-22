@@ -30,6 +30,8 @@ void setVolume(int percent);
 // The phone opened (true) or closed (false) the car microphone (aa_mic). Browser mode asks for the browser source
 // again on close, in case the mic scenario moved the car off it (NBT-AAD BrowserAudio::onMicClosed). Main loop thread.
 void onMic(bool open);
+// Main loop thread: rebuilds connection b8 when nbt_knob flagged it as dropped by the car (route-lost).
+void poll();
 
 } // namespace aa_audio
 

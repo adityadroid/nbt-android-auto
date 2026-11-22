@@ -953,8 +953,10 @@ extern "C" int nbt_video_capture_run(nbt_capture_transfer transfer, void* contex
             printf("AA_BYEBYE no answer within 1 s\n");
             break;
         }
-        if (c.live)
+        if (c.live) {
             aa_mic::poll();
+            aa_audio::poll();
+        }
         if (c.live && !bye_until && now_ms() >= next_stall_check) {
             next_stall_check = now_ms() + 1000;
             pthread_mutex_lock(&c.mutex);

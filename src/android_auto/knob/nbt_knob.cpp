@@ -639,6 +639,22 @@ void onSource(const nbt::most::View& m, void*) {
     }
     voiceSourceState(aux, other, m);
     callState(call, interrupting);
+    // Our browser route (NBT_AUDIO_MODE=browser): connection b8 vanished from the table while audioconn still has it
+    // built (user 2026-11-22: sound gone after reverse gear and after other interruptions) and nothing else holds the
+    // sound (no call, no interrupting connection): oneplus_native requests b8 again (aa_audio::poll). At most every 5 s.
+    {
+        static const char* mode = getenv("NBT_AUDIO_MODE");
+        static long long lastLost = -100000;
+        bool b8 = false;
+        for (size_t i = 2; i + 2 < (size_t)m.len && i < 2 + 3 * 8; i += 3)
+            if (((unsigned)m.data[i] << 8 | m.data[i + 1]) == 0xb8) b8 = true;
+        if (mode && !strcmp(mode, "browser") && !b8 && call < 0 && !interrupting && nowMs() - lastLost >= 5000 &&
+            access("/fs/ram3/nbt-aa-native/audio-route.built", F_OK) == 0 && sessionRunning()) {
+            lastLost = nowMs();
+            if (FILE* f = fopen("/fs/ram3/nbt-aa-native/route-lost", "w")) fclose(f);
+            printf("[Source] connection b8 gone from the table while built: asking the session to build it again\n");
+        }
+    }
     if (s == g_lastSource) return;                        // the same status once per receiver
     const int prev = g_lastSource;
     g_lastSource = s;
