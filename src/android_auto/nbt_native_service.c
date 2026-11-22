@@ -152,15 +152,17 @@ static void set_mic_and_bluetooth(void)
         snprintf(v, sizeof(v), "%u", pick);
         setenv("NBT_MIC_PICK", v, 1);
         printf("mic: car microphone from %s (%u Hz x%u, channel %u; mic-endpoint)\n", w, rate, ch, pick);
-    } else if (!access("mic-multich", F_OK)) {
-        /* valinet's aa_mic_multich: its own defaults (/output_multich_0, 22050 Hz, 4 channels, channels 0+1). It does not
-         * switch on the hands-free scenario, which this car needed for sound (car 2026-11-20). */
+    } else if (access("mic-ours", F_OK)) {
+        /* DEFAULT (car-verified 2026-11-22, do not change without a car test): valinet's aa_mic_multich, its own
+         * defaults (/output_multich_0, 22050 Hz, 4 channels, channels 0+1), no hands-free scenario. With it Google
+         * Assistant hears the driver AND phone calls have sound. Our aa_mic below (AmxHandsfree_Siri scenario,
+         * /output_mono_MIC_Prepro, fallback /output_multich_0) heard silence and left calls without sound. */
         setenv("NBT_MIC_IMPL", "multich", 1);
         unsetenv("NBT_MIC_ENDPOINT");
         unsetenv("NBT_MIC_RATE");
         unsetenv("NBT_MIC_CHANNELS");
-        printf("mic: valinet's capture (mic-multich)\n");
-    } else {
+        printf("mic: valinet's capture (default)\n");
+    } else {   /* mic-ours: our capture with the hands-free scenario (broke call sound on this car, 2026-11-22) */
         unsetenv("NBT_MIC_IMPL");
         setenv("NBT_MIC_ENDPOINT", "/output_mono_MIC_Prepro", 1);
         setenv("NBT_MIC_RATE", "44100", 1);

@@ -37,12 +37,13 @@ if test -e $P/res720; then touch $R/res720; echo 'res720 on'; fi
 #   Back to Bluetooth:  touch $P/bt-audio   (rm $P/bt-audio = Android Auto sound again)
 #   Optional experiment: $P/aa-audio, first line another connection id ("0" = play without a route)
 # A refused / unanswered route switches to Bluetooth by itself until the next reboot ($R/audio-route.failed).
-rm -f $R/aa-audio $R/audioconn $R/bt-audio $R/audio-browser $R/audio-f6 $R/media-jack $R/prompts-off $R/mic-multich
+rm -f $R/aa-audio $R/audioconn $R/bt-audio $R/audio-browser $R/audio-f6 $R/media-jack $R/prompts-off $R/mic-multich $R/mic-ours
 # Sound route (native_service set_audio): default = our b8 route (proven on the F10). touch $P/audio-f6 = valinet's
 # main source f6 + prompts over b8 (on this car f6 is a rear-entertainment source: "not operable from the front");
 # $P/media-jack = phone jack into AUX; $P/prompts-off = no prompts over other sources (f6 route);
-# $P/mic-multich = valinet's plain mic capture instead of ours.
-for f in audio-browser audio-f6 media-jack prompts-off mic-multich; do
+# Mic: valinet's plain capture is the default (car 2026-11-22: Assistant and call sound work); $P/mic-ours = our
+# capture with the hands-free scenario (it left calls without sound). mic-multich is the old name for the default.
+for f in audio-browser audio-f6 media-jack prompts-off mic-multich mic-ours; do
   if test -e $P/$f; then touch $R/$f; echo "audio: $f"; fi
 done
 if test -f $P/audioconn; then cp $P/audioconn $R/audioconn && chmod 700 $R/audioconn; fi
