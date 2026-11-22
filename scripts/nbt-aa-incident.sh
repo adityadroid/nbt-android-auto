@@ -36,7 +36,7 @@ F=$D/`date +%Y%m%d-%H%M%S`-$K.txt
   echo '--- system log'; sloginfo 2>/dev/null | tail -300
 } > $F.tmp 2>&1
 mv $F.tmp $F
-echo "$NOW INCIDENT $K session=$S $* -> incidents/`basename $F`" >> $P/events.log
+echo "$NOW INCIDENT $K session=$S $* -> incidents/${F##*/}" >> $P/events.log   # QNX has no basename
 n=0
 for f in `ls -t $D/*.txt 2>/dev/null`; do n=$((n+1)); if test $n -gt 40; then rm -f $f; fi; done
 exit 0

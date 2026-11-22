@@ -23,7 +23,8 @@ S=$D/restart-`date +%d%H%M%S`.txt
   echo '--- processes'; pidin arg | grep -i -e nme -e media -e audio -e amp -e nbt -e oneplus -e native -e decode -e hwvideo -e mm
   echo '--- system log'; sloginfo | tail -400
 } > $S 2>&1
-echo "`date '+%Y-%m-%d %H:%M:%S'` INCIDENT user-restart ${1:-service} -> snapshots/`basename $S`" >> $P/events.log
+# ${S##*/}: QNX has no basename (car 2026-11-22: "basename: cannot execute")
+echo "`date '+%Y-%m-%d %H:%M:%S'` INCIDENT user-restart ${1:-service} -> snapshots/${S##*/}" >> $P/events.log
 n=0
 for f in `ls -t $D/restart-*.txt`; do n=$((n+1)); if test $n -gt 5; then rm -f $f; fi; done
 if test -n "$1"; then rm -f anamorph center800 split800 classic; touch $1; fi
