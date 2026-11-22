@@ -1,0 +1,12 @@
+# Car health values for nbt_health (src/health/nbt_health.c). One value per line, '|' separated:
+# label|src|module|id|offset|length|signed|factor|add|unit|decimals|ok_lo|ok_hi|watch_lo|watch_hi|when
+# src obd = OBD-II service 01 PID, did = UDS 22 DID; module/id in hex; offset/length = bytes after the echoed id,
+# big-endian; value = raw*factor+add; empty limit = none; when: run / off / any (limits apply only then).
+# Limits are for this 2014 F10 530d (N57 diesel); tune after real drives.
+Coolant|obd|12|05|0|1|0|1|-40|C|0|70|105|50|112|run
+Battery|obd|12|42|0|2|0|0.001|0|V|1|13.2|15.0|12.8|15.5|run
+Battery|obd|12|42|0|2|0|0.001|0|V|1|12.0||11.8||off
+Engine speed|obd|12|0C|0|2|0|0.25|0|rpm|0|||||any
+Engine load|obd|12|04|0|1|0|0.392157|0|%|0|||||any
+Intake air|obd|12|0F|0|1|0|1|-40|C|0||60||75|run
+Boost (MAP)|obd|12|0B|0|1|0|1|0|kPa|0|||||any

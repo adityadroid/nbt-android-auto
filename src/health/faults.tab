@@ -1,0 +1,1 @@
+# Fault names for nbt_health: "MODULE DTC text" (DTC = first two bytes, hex). Keep text short (~30 chars).

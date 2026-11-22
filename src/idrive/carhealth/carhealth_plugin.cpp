@@ -1,6 +1,6 @@
 // libNbtCarHealth.so - "Car health" entry under Vehicle Info (HMI plugin, /var/opt/hmi/data/rw/Plugins/NbtCarHealth).
 //
-// Opening the entry shows page 10: ten live rows that nbt_health (src/health/nbt_health.c, its own process started by
+// Opening the entry shows page 10: up to 24 live rows that nbt_health (src/health/nbt_health.c, its own process started by
 // boot.sh) writes to /fs/ram3/nbt-health.txt: coolant, battery, engine, intake air, boost, odometer, faults. While the
 // page has focus this plugin refreshes the rows every second and touches /fs/ram3/nbt-health-active, which is what makes
 // nbt_health talk to the car; nothing is asked of the car while the page is closed. Separate from the Android Auto plugin
@@ -40,7 +40,7 @@ private:
 };
 }
 namespace {
-const unsigned kPage=10, kFocus=1, kVisible=11, kRow0=111, kRows=10, kLen=48;
+const unsigned kPage=10, kFocus=1, kVisible=11, kRow0=111, kRows=24, kLen=48;
 // car 2026-11-22: leaving the page with MENU sent no focus=false, so polling ran on (and nbt_health kept the car's
 // tester address busy). Polling now also stops when the page stops being visible, and after kMaxPoll seconds.
 const long kMaxPoll=600;

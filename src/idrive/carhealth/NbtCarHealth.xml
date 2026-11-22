@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- "Car health" entry under Vehicle Info (applicationType VehicleInformation: an active pluginApp entry point in this
-     car's HMI rules, CID_VEHL6_LS_Selection_List). Opening it shows page 10: ten live rows (raDataModel 111-120) that
+     car's HMI rules, CID_VEHL6_LS_Selection_List). Opening it shows page 10: 24 live rows (raDataModel 111-134) that
      libNbtCarHealth.so fills from nbt_health's RAM file while the page has focus. Structure as the car-confirmed
      NbtReboot / Android Auto pages. -->
 <pluginApps>
@@ -22,6 +22,20 @@
       <raDataModel id="118"/>
       <raDataModel id="119"/>
       <raDataModel id="120"/>
+      <raDataModel id="121"/>
+      <raDataModel id="122"/>
+      <raDataModel id="123"/>
+      <raDataModel id="124"/>
+      <raDataModel id="125"/>
+      <raDataModel id="126"/>
+      <raDataModel id="127"/>
+      <raDataModel id="128"/>
+      <raDataModel id="129"/>
+      <raDataModel id="130"/>
+      <raDataModel id="131"/>
+      <raDataModel id="132"/>
+      <raDataModel id="133"/>
+      <raDataModel id="134"/>
     </models>
     <hmiStates>
       <hmiState id="10" textModel="3" text="Car health">
@@ -36,6 +50,20 @@
           <label id="28" model="118" text="-"/>
           <label id="29" model="119" text="-"/>
           <label id="30" model="120" text="-"/>
+          <label id="31" model="121" text="-"/>
+          <label id="32" model="122" text="-"/>
+          <label id="33" model="123" text="-"/>
+          <label id="34" model="124" text="-"/>
+          <label id="35" model="125" text="-"/>
+          <label id="36" model="126" text="-"/>
+          <label id="37" model="127" text="-"/>
+          <label id="38" model="128" text="-"/>
+          <label id="39" model="129" text="-"/>
+          <label id="40" model="130" text="-"/>
+          <label id="41" model="131" text="-"/>
+          <label id="42" model="132" text="-"/>
+          <label id="43" model="133" text="-"/>
+          <label id="44" model="134" text="-"/>
         </components>
       </hmiState>
     </hmiStates>

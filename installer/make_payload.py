@@ -73,6 +73,8 @@ def built_files(built, pem_dir):
     # Car health page data (src/health/nbt_health.c), started by boot.sh; idle unless the page is open
     if (programs / 'nbt_health').is_file():
         result.append((programs / 'nbt_health', 'rt/nbt_health', RT + '/nbt_health', '700'))
+        for leaf in ('health.tab', 'faults.tab'):        # value + fault-name tables nbt_health reads (src/health)
+            result.append((REPO / 'src' / 'health' / leaf, 'rt/' + leaf, RT + '/' + leaf, '644'))
     # its own HMI plugin under Vehicle Info (src/idrive/carhealth); the installer writes every .manifest last
     if (programs / 'libNbtCarHealth.so').is_file():
         res = built / 'carhealth-resources'
