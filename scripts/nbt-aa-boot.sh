@@ -67,7 +67,9 @@ if test -e $P/gate-on; then touch $R/gate.mode; echo 'gate on'; fi
 # 30 fps, $P/decoder.args = extra arguments, $P/decoder.stale = ms without a picture before its window hides (default
 # 5000). In $R, decoder.mode and decoder.60fps tell native_service and nbt_knob.
 rm -f $R/decoder.mode $R/decoder.60fps $R/nbt_decoder $R/decoder.args $R/decoder.stale $R/decoder.delay
-if test -f $P/nbt_decoder -a ! -e $P/decoder.off; then
+# Opt-in on this car (2026-11-22): on the F10 the car's video path stopped taking nbt_decoder's pictures ~10 s after boot
+# (VideoFrame failed 0x800f0053, nothing shown), so the default is the old Cinemo path; touch $P/decoder.on to try it.
+if test -f $P/nbt_decoder -a -e $P/decoder.on -a ! -e $P/decoder.off; then
   cp $P/nbt_decoder $R/nbt_decoder && chmod 700 $R/nbt_decoder && touch $R/decoder.mode
   test -e $P/decoder.30fps || touch $R/decoder.60fps
   test -f $P/decoder.args && cp $P/decoder.args $R/decoder.args
