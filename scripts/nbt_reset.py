@@ -12,6 +12,7 @@ HSFZ framing as in github.com/Xayanix/nbt-evo-ssh-unlocker (nbt_optdebug_flash.p
 import argparse
 import socket
 import struct
+import subprocess
 import sys
 import time
 
@@ -22,23 +23,38 @@ IDENT_PORT = 6811
 
 
 def enet_source():
-    """Local 169.254.x.x address the ENET cable uses (None if the route points elsewhere, e.g. a VPN)."""
+    """(local 169.254.x.x address, interface) of the ENET cable, from the route to the head unit (169.254.199.99).
+    Car 2026-11-22: a route test to 169.254.1.1 picked the Wi-Fi, so the broadcast never reached the car."""
+    ip = ifname = None
     try:
         probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        probe.connect(("169.254.1.1", 9))
+        probe.connect(("169.254.199.99", 9))
         ip = probe.getsockname()[0]
         probe.close()
-        if ip.startswith("169.254."):
-            return ip
     except OSError:
         pass
-    return None
+    if not ip or not ip.startswith("169.254."):
+        return None, None
+    try:
+        out = subprocess.run(["route", "-n", "get", "169.254.199.99"], stdout=subprocess.PIPE,
+                             stderr=subprocess.DEVNULL, timeout=3).stdout.decode()
+        for line in out.splitlines():
+            if line.strip().startswith("interface:"):
+                ifname = line.split(":", 1)[1].strip()
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return ip, ifname
 
 
-def discover(src, timeout=4.0):
-    """HSFZ identification broadcast -> gateway IP (or None)."""
+def discover(src, ifname=None, timeout=4.0):
+    """HSFZ identification broadcast on the ENET interface -> gateway IP (or None)."""
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+    if ifname and sys.platform == "darwin":
+        try:   # macOS IP_BOUND_IF: out of the ENET interface, not the default route (Wi-Fi)
+            s.setsockopt(socket.IPPROTO_IP, 25, socket.if_nametoindex(ifname))
+        except OSError:
+            pass
     if src:
         try:
             s.bind((src, 0))
@@ -48,7 +64,7 @@ def discover(src, timeout=4.0):
     try:
         s.sendto(struct.pack(">IH", 0, 0x0011), ("169.254.255.255", IDENT_PORT))
         data, addr = s.recvfrom(512)
-    except socket.timeout:
+    except (socket.timeout, OSError):
         return None
     finally:
         s.close()
@@ -106,8 +122,9 @@ def main():
     ap.add_argument("--type", type=int, choices=(1, 2, 3), default=1,
                     help="1 hardReset (default), 2 keyOffOnReset, 3 softReset")
     a = ap.parse_args()
-    src = a.src or enet_source()
-    host = a.host or discover(src)
+    found_src, ifname = enet_source()
+    src = a.src or found_src
+    host = a.host or discover(src, ifname)
     if not host:
         print("no gateway found: check the ENET cable, or pass --host with the gateway IP")
         return 1
