@@ -274,11 +274,11 @@ bool g_wheelAuxOnly = true;
 
 bool wheelAllowed(const char* what) {
     if (!g_wheelAuxOnly) {
-        // our browser route (native_service: audio-browser, NBT_WHEEL_AUX_ONLY=0): Android Auto is the audio source while
-        // its connection b8 is built (audioconn keeps this file)
-        const char* mode = getenv("NBT_AUDIO_MODE");
-        if (!mode || strcmp(mode, "browser") || access("/fs/ram3/nbt-aa-native/audio-route.built", F_OK) == 0) return true;
-        printf("[Wheel] %s ignored: Android Auto is not the audio source (browser route not built)\n", what);
+        // our browser route or Bluetooth (native_service: audio-browser / bt-audio, NBT_WHEEL_AUX_ONLY=0): Android Auto is
+        // the audio source only while its connection b8 is built (audioconn keeps this file); in Bluetooth mode never, iDrive
+        // already skips tracks over Bluetooth (review 2026-11-22)
+        if (access("/fs/ram3/nbt-aa-native/audio-route.built", F_OK) == 0) return true;
+        printf("[Wheel] %s ignored: Android Auto is not the audio source (no b8 route)\n", what);
         return false;
     }
     if (g_lastSource < 0 || g_lastSource == (int)g_auxSource) return true;
