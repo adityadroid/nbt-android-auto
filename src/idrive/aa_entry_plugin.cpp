@@ -702,6 +702,10 @@ bool showTooEarly() {
 }
 void TargetPoll::run() {
     if(!app||!e||e->stopping){active=false;return;}
+    // CDS probe (PLAN-diagnostics.md): car 2026-11-22 it never started, because valinet's start at boot shows Android
+    // Auto without the entry page ever taking the focus (its only trigger). This poll runs from 5 s after create, so the
+    // probe starts as soon as its flag file exists (probeStart: once per HMI start, crash guard included).
+    probeStart(app);
     bool running=false;
     readStatus(&running);
     const int want=running?(int)(kHoldState+kHoldCount-1):(int)kEntryState;
