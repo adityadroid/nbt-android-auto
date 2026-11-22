@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- "Car health" entry under Vehicle Info (applicationType VehicleInformation: an active pluginApp entry point in this
+     car's HMI rules, CID_VEHL6_LS_Selection_List). Opening it shows page 10: ten live rows (raDataModel 111-120) that
+     libNbtCarHealth.so fills from nbt_health's RAM file while the page has focus. Structure as the car-confirmed
+     NbtReboot / Android Auto pages. -->
+<pluginApps>
+  <pluginApp applicationType="VehicleInformation" applicationWeight="200" text="Car health">
+    <entryButton id="1" action="2" model="3"/>
+    <actions>
+      <hmiAction id="2" target="10" targetModel="5"/>
+    </actions>
+    <models>
+      <textIdModel id="3" textId="1" preinst="false"/>
+      <raIntModel id="5" value="10"/>
+      <raDataModel id="111"/>
+      <raDataModel id="112"/>
+      <raDataModel id="113"/>
+      <raDataModel id="114"/>
+      <raDataModel id="115"/>
+      <raDataModel id="116"/>
+      <raDataModel id="117"/>
+      <raDataModel id="118"/>
+      <raDataModel id="119"/>
+      <raDataModel id="120"/>
+    </models>
+    <hmiStates>
+      <hmiState id="10" textModel="3" text="Car health">
+        <components>
+          <label id="21" model="111" text="-"/>
+          <label id="22" model="112" text="-"/>
+          <label id="23" model="113" text="-"/>
+          <label id="24" model="114" text="-"/>
+          <label id="25" model="115" text="-"/>
+          <label id="26" model="116" text="-"/>
+          <label id="27" model="117" text="-"/>
+          <label id="28" model="118" text="-"/>
+          <label id="29" model="119" text="-"/>
+          <label id="30" model="120" text="-"/>
+        </components>
+      </hmiState>
+    </hmiStates>
+  </pluginApp>
+</pluginApps>
