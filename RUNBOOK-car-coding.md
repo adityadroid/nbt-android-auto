@@ -1,69 +1,51 @@
-# Car session: coding + diagnostics (next drive)
+# Next car visit: flash Car health v2, probe oil values, apply coding
 
-One ENET cable does all of it. Keep the engine running or a charger on the battery — a coding write must not lose power.
-Gateway is at `169.254.101.24` (the probe/reset tools find it on the ENET adapter now).
+One ENET cable does all of it. Engine running (or a charger on) for every coding write. Leave the iDrive Car health
+page closed while the Mac talks to the car. Everything below was built and tested offline on 2026-11-22.
 
-## A. Android Auto + Car Health probe (the drive)
+## 1. Car health v2 (head unit)
 
-1. Connect the cable, wait ~20 s for the Mac's adapter to get a 169.254 address.
-2. Install the latest build (probe-start fix + mic/sound defaults baked in):
-   ```bash
-   cd ~/experiment/bmw && ./flash-aa-open.sh --install-only
-   ```
-   Then reboot the head unit: `python3 scripts/nbt_reset.py`
-3. Turn the car-data probe on and open Android Auto once:
-   ```bash
-   scripts/cds-probe.sh on
-   ```
-4. Drive ~15 min: engine off 2 min, idle 5 min, short drive. Use lights, wipers, A/C, reverse gear.
-5. Before switching off (the probe log is in RAM):
-   ```bash
-   python3 scripts/nbt_pull_logs.py
-   python3 scripts/car_health.py .local/car-logs/<newest>
-   scripts/cds-probe.sh off
-   ```
-   `car_health.py` prints OK / watch / act per value and lists any property with no rule yet (tell me those; I add rules).
+```bash
+cd ~/experiment/bmw && ./flash-aa-open.sh --install-only      # asks for the NBT root password
+python3 scripts/nbt_reset.py                                  # restart the head unit (the knob restart did not work)
+```
 
-## B. Coding — full reads + verify the signers (parked, engine on or charger)
+Check: Vehicle Info -> Car health. First line is the overall verdict, then battery, fuel, range, DPF, faults with names.
 
-The coding tool lives in `~/experiment/nbt-coding`. The CAFDs are decrypted; keys are recovered and git-ignored.
+## 2. Oil and engine values (DME measurement probe, read-only)
 
-1. Start the GUI: `cd ~/experiment/nbt-coding && python3 -m nbtcoding`
-2. For **FRM** and **KOMBI**: pick the module, **Read from car** (this now reads every datagroup the CAFD needs).
-3. Verify each signer against the car:
-   ```bash
-   python3 -m nbtcoding.sign
-   ```
-   FRM and KOMBI should both print `signature VERIFIED against the car` (NBT already does). If one does not, stop and
-   tell me — do not write that module.
+```bash
+cd ~/experiment/nbt-coding && python3 tools_probe_measure.py
+```
 
-## C. Find the 5 wishlist settings (read → toggle → read → diff)
+It reports, for oil temperature / level / pressure, rail and boost actual vs target, DPF pressure, which route
+works (default, extended, dynamic) and the value. Tell me the output; I switch the matching rows on in
+`src/health/health.tab` and push the table (re-run step 1, no rebuild needed for table-only changes).
 
-BMW ships every setting unnamed, so we locate each one by the change it makes. Nothing here writes.
+## 3. Coding (recipes)
 
-For each feature (mirror fold on lock, auto start/stop default, lock confirm light+horn, welcome lights, needle sweep):
+Every module's signer is proven against this car (all 31, 2026-11-22). Each recipe reads the module again, saves a
+backup, writes one signed change per module and reads it back. Review first (`--car`), then write (`--car --write`).
 
-1. Read the module (GUI **Read from car**, or `python3 -m nbtcoding.probe`) — the "before".
-2. Toggle the feature in the car: iDrive menu, key fob, or the physical control.
-3. Read again — the "after".
-4. Diff:
-   ```bash
-   python3 -m nbtcoding.diff <before.json> <after.json> <MODULE>
-   ```
-   It prints the exact setting(s) that changed, with location and old → new. That is the feature.
-5. Tell me the location; I add the name so it shows up labelled.
+```bash
+cd ~/experiment/nbt-coding
+python3 -m nbtcoding.recipe                                  # list
+python3 -m nbtcoding.recipe digital-speed --car              # review only
+python3 -m nbtcoding.recipe digital-speed --car --write      # write (asks for the owner phrase)
+```
 
-Modules: mirror fold / start-stop / lock confirm → CAS; welcome lights → FRM; needle sweep → KOMBI.
-(CAS uses AES-128-CMAC, not RSA — now implemented and NIST-proven. CAS becomes writable once a full CAS read reproduces its 16-byte tag, same as FRM/KOMBI. Still last, being the immobiliser.)
+Suggested order (low risk first): `digital-speed` (KOMBI) -> `start-stop-memory` (CAS) -> `lock-horn` (CAS) ->
+`mirror-fold-door-handle` (CAS) -> `key-parked-ventilation` (CAS + IHKA). The GUI (`python3 -m nbtcoding`) has the
+same recipes as "Popular changes" cards.
 
-## D. First real write — FRM only, carefully (after B verified FRM)
+## 4. Remote engine start (experimental, only if wanted)
 
-Only once FRM's signer verified (step B) and a backup exists. FRM (lights) is the safe first write; CAS (AES-CMAC, now implemented) is last, being the immobiliser. The tool keeps a full backup on every read; the write is gated (`write.commit`, owner unlock string).
-We do this together, one setting, read back, confirm the effect, keep the backup to revert.
+Read `PLAN-remote-climate.md` first. Recipe `remote-engine-start` (CAS + FZD), then the test there: outdoors, P,
+nobody inside, doors locked; try the gesture; a door opened without the key must stop the engine; it must stop by
+itself. Any doubt: restore the CAS and FZD backups the recipe saved.
 
 ## Safety
 
-- Engine running or charger on for any write.
-- One setting at a time, read back after, keep the backup.
-- Never code HU_NBT (the Android Auto mod lives there).
-- A head-unit hang: hold the volume knob ~30 s (harmless).
+- Never code HU_NBT (Android Auto lives there; the tool refuses it).
+- One recipe at a time; test the effect before the next.
+- A head-unit hang: `python3 scripts/nbt_reset.py` from the Mac.
