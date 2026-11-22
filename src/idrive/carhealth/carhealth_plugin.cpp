@@ -40,7 +40,10 @@ private:
 };
 }
 namespace {
-const unsigned kPage=10, kFocus=1, kRow0=111, kRows=10, kLen=48;
+const unsigned kPage=10, kFocus=1, kVisible=11, kRow0=111, kRows=10, kLen=48;
+// car 2026-11-22: leaving the page with MENU sent no focus=false, so polling ran on (and nbt_health kept the car's
+// tester address busy). Polling now also stops when the page stops being visible, and after kMaxPoll seconds.
+const long kMaxPoll=600;
 const char* const kActive="/fs/ram3/nbt-health-active";
 const char* const kOut="/fs/ram3/nbt-health.txt";
 const char* const kTrying="/fs/ram3/nbt-health-trying";
@@ -92,6 +95,7 @@ public:
     void run() {
         pending=false;
         if(!active||!g_app||g_off)return;
+        if(uptime_s()-g_openedAt>kMaxPoll){active=false;plog("stopped: open longer than 10 min");return;}
         int fd=open(kActive,O_WRONLY|O_CREAT|O_TRUNC,0644);
         if(fd>=0){if(write(fd,"1",1)<0){}close(fd);}
         char rows[kRows][kLen];
@@ -107,6 +111,13 @@ public:
     }
 };
 Poll g_poll;
+
+bool pageVisible(void*,const bmw::Parcel& p) {
+    bool visible=false;p.readBool(visible);
+    plog(visible?"page visible":"page hidden");
+    if(!visible)g_poll.active=false;
+    return true;
+}
 
 bool pageFocus(void*,const bmw::Parcel& p) {
     bool focused=false;p.readBool(focused);
@@ -130,6 +141,8 @@ bmw::IPluginApp* create(bmw::IDispatcher& d,const char* name,const bmw::Bundle& 
     if(access(kOff,F_OK)==0){g_off=true;plog("off (health.off)");}
     bmw::ActionDelegate onPage={&g_handlerObject,&pageFocus};
     g_app->addHandler(kPage,kFocus,onPage);
+    bmw::ActionDelegate onVisible={&g_handlerObject,&pageVisible};
+    g_app->addHandler(kPage,kVisible,onVisible);   // type 11 = VISIBLE, as the Android Auto plugin's hold pages use it
     plog(g_app->start()?"plugin created, started":"plugin created");
     return reinterpret_cast<bmw::IPluginApp*>(g_app);
 }

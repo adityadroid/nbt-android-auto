@@ -35,7 +35,8 @@
 #define LOG_FILE    "/fs/ram3/nbt-health.log"
 #define GATEWAY_FILE "/var/opt/hmi/data/rw/NbtAndroidAutoRT/gateway"
 #define DEFAULT_GW  "169.254.101.24"   /* this F10's gateway (ZGW), found by broadcast on 2026-11-22 */
-#define TESTER      0xF4
+#define TESTER      0xF5   /* not F4: the Mac tools use F4, and the gateway drops a connection when another opens
+                               with the same tester address (car 2026-11-22). Only F4 and F5 are accepted. */
 #define HSFZ_PORT   6801
 #define IDENT_PORT  6811
 #define ROWS        10
