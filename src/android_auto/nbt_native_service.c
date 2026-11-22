@@ -220,8 +220,9 @@ static void set_audio_mode(void)
     audio_conn = 0;
     if (!access("bt-audio", F_OK))
         why = "bt-audio switch";
-    else if (!access("audio-route.failed", F_OK))
-        why = "audio route failed earlier (audio-route.failed)";
+    /* audio-route.failed no longer switches the rest of the boot to Bluetooth (car 2026-11-22): since the valinet merge
+     * the session starts ~25 s after boot, when the car still refuses connection b8 (MOST ERROR 42); three refusals then
+     * left the whole boot without Android Auto sound. A later build is granted, so every session tries again. */
     f = why ? 0 : fopen("aa-audio", "r");
     if (f) {
         explicit_file = 1;
@@ -266,8 +267,9 @@ static void set_audio_mode(void)
     setenv("NBT_AUDIO_MODE", "browser", 1);
     setenv("NBT_SDR_DROP", "2,4", 1); /* keep the media sink (ch 9) */
     setenv("NBT_BROWSER_CONN", line, 1);
-    /* few retries: a car that refuses the route goes back to Bluetooth from the next session on */
-    setenv("NBT_AUDIOCONN_RETRIES", "2", 1);
+    /* the audio code's own schedule: 6 retries over ~56 s (5, 7, 9, 11, 12, 12 s), long enough for the car's audio
+     * system to settle after a boot (car 2026-11-22: refused with ERROR 42 ~25 s after boot, granted later) */
+    setenv("NBT_AUDIOCONN_RETRIES", "6", 1);
     if (conn) {
         setenv("NBT_AUDIOCONN", RUNTIME_DIR "/audioconn", 1);
         audio_conn = conn;
