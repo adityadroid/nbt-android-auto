@@ -66,6 +66,7 @@ public:
     void triggerEvent(unsigned);
     void updateModel(unsigned,const TextID&);
     void updateModel(unsigned,int);   // _ZN3bmw9PluginApp11updateModelEji (in this car's libAppFramework.A.so)
+    void updateModel(unsigned,const char*);   // _ZN3bmw9PluginApp11updateModelEjPKc (in this car's swfl_00001289 libAppFramework)
     void addHandler(unsigned,unsigned,const ActionDelegate&);
     // this car's libAppFramework.A.so (2026-11-17): start() = state 0/4 -> 1 + PluginAppHandler::start() (the queue of
     // post()ed runnables is served from then on); the HMI calls it only when the page is first opened.
@@ -936,6 +937,75 @@ bool sysGoFocus(void*,const bmw::Parcel& p) {
     return true;
 }
 
+// --- Car health page (PLAN-diagnostics.md) -----------------------------------------------------------------------------
+// Page 40 shows ten rows that nbt-health (src/health/nbt_health.c, its own process) writes to kHealthOut. While the page
+// has focus this touches kHealthActive every second; nbt-health only talks to the car while that file is fresh, so
+// nothing is asked of the car when the page is closed. Rows are raDataModel labels filled with updateModel(id, char*).
+// Guard: kHealthTrying exists while rows are pushed for the first time in this HMI start; if iDrive restarts during
+// that, the next load finds it and keeps the page empty for the rest of the boot. kHealthOff disables it for good.
+const unsigned kHealthState=40, kHealthRow0=111, kHealthRows=10, kHealthLen=48;
+const char* const kHealthActive="/fs/ram3/nbt-health-active";
+const char* const kHealthOut="/fs/ram3/nbt-health.txt";
+const char* const kHealthTrying="/fs/ram3/nbt-health-trying";
+const char* const kHealthOff="/var/opt/hmi/data/rw/NbtAndroidAutoRT/health.off";
+bmw::PluginApp* g_healthApp=0;
+bool g_healthOff=false, g_healthPushedOnce=false;
+char g_healthShown[kHealthRows][kHealthLen];
+
+void healthRows(char rows[kHealthRows][kHealthLen]) {
+    memset(rows,0,kHealthRows*kHealthLen);
+    struct stat st;
+    if(stat(kHealthOut,&st)!=0||time(0)-st.st_mtime>15){
+        snprintf(rows[0],kHealthLen,"%s",access(kHealthOut,F_OK)==0?"Reading the car ...":"Starting ...");
+        return;
+    }
+    char buf[kHealthRows*kHealthLen+16];
+    int fd=open(kHealthOut,O_RDONLY); if(fd<0)return;
+    ssize_t n=read(fd,buf,sizeof(buf)-1); close(fd);
+    if(n<=0)return;
+    buf[n]=0;
+    unsigned row=0,col=0;
+    for(ssize_t i=0;i<n&&row<kHealthRows;++i){
+        char c=buf[i];
+        if(c=='\n'){++row;col=0;continue;}
+        if(c>=' '&&c<127&&col<kHealthLen-1)rows[row][col++]=c;
+    }
+}
+
+class HealthPoll : public bmw::Runnable {
+public:
+    bool active, pending;
+    HealthPoll():active(false),pending(false) {}
+    void run() {
+        pending=false;
+        if(!active||!g_healthApp||g_healthOff)return;
+        int fd=open(kHealthActive,O_WRONLY|O_CREAT|O_TRUNC,0644);
+        if(fd>=0){if(write(fd,"1",1)<0){}close(fd);}
+        char rows[kHealthRows][kHealthLen];
+        healthRows(rows);
+        if(!g_healthPushedOnce)touch(kHealthTrying);
+        for(unsigned i=0;i<kHealthRows;++i){
+            if(strcmp(rows[i],g_healthShown[i])==0)continue;
+            g_healthApp->updateModel(kHealthRow0+i,rows[i][0]?rows[i]:" ");
+            memcpy(g_healthShown[i],rows[i],kHealthLen);
+        }
+        if(!g_healthPushedOnce){g_healthPushedOnce=true;unlink(kHealthTrying);plog("car health: rows shown",0);}
+        pending=true;g_healthApp->post(this,1000);
+    }
+};
+HealthPoll g_healthPoll;
+int g_healthHandlerObject=0;   // a null delegate object makes the HMI skip the handler (car 2026-11-12)
+bool healthFocus(void*,const bmw::Parcel& p) {
+    bool focused=false;p.readBool(focused);
+    plog("car health page focus",focused?1:0);
+    g_healthPoll.active=focused&&!g_healthOff;
+    if(g_healthPoll.active){
+        for(unsigned i=0;i<kHealthRows;++i){g_healthShown[i][0]=1;g_healthShown[i][1]=0;}   // push every row again
+        if(!g_healthPoll.pending&&g_healthApp){g_healthPoll.pending=true;g_healthApp->post(&g_healthPoll,100);}
+    }
+    return true;
+}
+
 Entry entry;
 bool created=false;
 bmw::IPluginApp* create(bmw::IDispatcher& d,const char* name,const bmw::Bundle& p,const bmw::Bundle& c) {
@@ -968,6 +1038,11 @@ bmw::IPluginApp* create(bmw::IDispatcher& d,const char* name,const bmw::Bundle& 
     bmw::ActionDelegate onSysGo={&g_sysHandlerObject,&sysGoFocus};
     app->addHandler(kSysAskState,kFocus,onSysAsk);
     app->addHandler(kSysGoState,kFocus,onSysGo);
+    g_healthApp=app;g_healthPoll.active=false;g_healthPoll.pending=false;g_healthPushedOnce=false;
+    if(access(kHealthTrying,F_OK)==0){g_healthOff=true;unlink(kHealthTrying);plog("car health: iDrive restarted while showing it, off for this boot",0);}
+    if(access(kHealthOff,F_OK)==0){g_healthOff=true;plog("car health: off (health.off)",0);}
+    bmw::ActionDelegate onHealth={&g_healthHandlerObject,&healthFocus};
+    app->addHandler(kHealthState,kFocus,onHealth);
     created=true;
     // iDrive restarted without a head-unit boot (user report: "one time the entire iDrive rebooted"): /fs/ram3 survives
     // an HMI restart, so a marker from an earlier load means HmiMain3D started again. boot.sh's watcher then saves an
@@ -993,6 +1068,7 @@ void destroy(bmw::IPluginApp* p) {
     entry.stopping=true;
     touch(kHidden);
     entry.checker.e=0;entry.verifier.e=0;entry.back.app=0;entry.target.app=0;entry.background.e=0;g_sysApp=0;
+    g_healthApp=0;g_healthPoll.active=false;
     delete reinterpret_cast<bmw::PluginApp*>(p);   // native handler drops the queued runnable (entry is static)
     entry.app=0;
     created=false;

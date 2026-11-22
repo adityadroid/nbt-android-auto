@@ -20,6 +20,9 @@
       <!-- "Start at boot" on/off (Android Auto to the front at the first session, see nbt_knob.cpp) -> inert page 35, whose
            focus switches the flag file start-at-boot.off and sends focus event 53 back to 10 -->
       <hmiAction id="90" target="35"/>
+      <!-- "Car health" -> page 40: ten live rows (raDataModel 111-120) filled by the plugin from nbt-health's RAM file
+           while the page has focus (PLAN-diagnostics.md) -->
+      <hmiAction id="97" target="40"/>
     </actions>
     <models>
       <textIdModel id="3" textId="1" preinst="false"/>
@@ -44,6 +47,18 @@
       <textIdModel id="91" textId="31" preinst="false"/>
       <textIdModel id="94" textId="33" preinst="false"/>
       <textIdModel id="95" textId="34" preinst="false"/>
+      <textIdModel id="98" textId="35" preinst="false"/>
+      <textIdModel id="99" textId="36" preinst="false"/>
+      <raDataModel id="111"/>
+      <raDataModel id="112"/>
+      <raDataModel id="113"/>
+      <raDataModel id="114"/>
+      <raDataModel id="115"/>
+      <raDataModel id="116"/>
+      <raDataModel id="117"/>
+      <raDataModel id="118"/>
+      <raDataModel id="119"/>
+      <raDataModel id="120"/>
     </models>
     <events>
       <focusEvent id="52" target="13"/>
@@ -574,6 +589,7 @@
           <button id="61" action="26" model="6" text="Split screen"/>
           <button id="62" action="27" model="7" text="Full width"/>
           <button id="92" action="90" model="91" text="Start at boot: on"/>
+          <button id="96" action="97" model="98" text="Car health"/>
           <button id="68" action="28" model="25" text="Android Auto neu starten"/>
           <button id="86" action="80" model="82" text="System neu starten"/>
         </components>
@@ -587,6 +603,20 @@
       <hmiState id="31" parentId="10" textModel="24" text="Bildmodus">
         <components>
           <label id="67" model="23" text="Bildmodus gespeichert"/>
+        </components>
+      </hmiState>
+      <hmiState id="40" parentId="10" textModel="99" text="Car health">
+        <components>
+          <label id="101" model="111" text="-"/>
+          <label id="102" model="112" text="-"/>
+          <label id="103" model="113" text="-"/>
+          <label id="104" model="114" text="-"/>
+          <label id="105" model="115" text="-"/>
+          <label id="106" model="116" text="-"/>
+          <label id="107" model="117" text="-"/>
+          <label id="108" model="118" text="-"/>
+          <label id="109" model="119" text="-"/>
+          <label id="110" model="120" text="-"/>
         </components>
       </hmiState>
       <hmiState id="35" parentId="10" textModel="95" text="Start at boot">
