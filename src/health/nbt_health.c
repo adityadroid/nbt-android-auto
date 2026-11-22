@@ -12,10 +12,12 @@
  *   nbt-health --once IP [TABLE] [FAULTS]   one poll, rows to stdout (testing from a Mac on the ENET cable)
  *
  * health.tab, one value per line ('#' comments), '|' separated:
- *   label|src|module|id|offset|length|signed|factor|add|unit|decimals|ok_lo|ok_hi|watch_lo|watch_hi|when
+ *   label|src|module|id|offset|length|signed|factor|add|unit|decimals|ok_lo|ok_hi|watch_lo|watch_hi|when[|route]
  *   src: obd (service 01 PID) or did (service 22 DID) on module (hex); offset/length: bytes of the data after the
  *   echoed PID/DID, big-endian; value = raw*factor+add; limits may be empty; when: run (limits only with the engine
  *   running), off (only with it stopped) or any. A label listed twice (run and off) shows the line for the state now.
+ *   route (optional): ext = read in the extended session (10 03), dyn = through a temporary dynamic DID
+ *   (2C 01 F300 <id> 01 <len>, 22 F300, 2C 03 F300); the module goes back to the default session after the poll.
  * faults.tab: "MODULE DTC text" per line, DTC = all three bytes, e.g. "DME 24F700 Fuel filter heater circuit open".
  *
  * Plain C99 + BSD sockets: builds with the open QNX 6.5 gcc and with any desktop compiler.
@@ -67,7 +69,7 @@ static const struct { unsigned char addr; const char *name; } MODULES[] = {
 
 typedef struct {
     char label[24], unit[8], when[4];
-    int obd, module, id, off, len, sgn, dec;
+    int obd, module, id, off, len, sgn, dec, route;   /* route: 0 plain, 1 extended session, 2 dynamic DID */
     double factor, add, ok_lo, ok_hi, w_lo, w_hi;
     int has[4];               /* ok_lo ok_hi watch_lo watch_hi present */
     int valid; double value;
@@ -119,8 +121,8 @@ static char *field(char **p) {
 
 static int parse_item(char *line, Item *it) {
     memset(it, 0, sizeof *it);
-    char *p = line, *f[16];
-    for (int i = 0; i < 16; ++i) f[i] = field(&p);
+    char *p = line, *f[17];
+    for (int i = 0; i < 17; ++i) f[i] = field(&p);
     if (!f[0][0] || !f[3][0]) return 0;
     snprintf(it->label, sizeof it->label, "%s", f[0]);
     it->obd = !strcmp(f[1], "obd");
@@ -133,6 +135,7 @@ static int parse_item(char *line, Item *it) {
     double *lim[4] = {&it->ok_lo, &it->ok_hi, &it->w_lo, &it->w_hi};
     for (int i = 0; i < 4; ++i) if (f[11 + i][0]) { *lim[i] = atof(f[11 + i]); it->has[i] = 1; }
     snprintf(it->when, sizeof it->when, "%s", f[15][0] ? f[15] : "any");
+    it->route = !strcmp(f[16], "ext") ? 1 : !strcmp(f[16], "dyn") ? 2 : 0;
     return it->len > 0 && it->len <= 4;
 }
 
@@ -291,11 +294,31 @@ typedef struct {
 } Health;
 
 static void read_items(int fd, Health *h) {
+    unsigned char ext_on[256];
+    memset(ext_on, 0, sizeof ext_on);
     h->engine_answer = 0;
     for (int i = 0; i < g_n; ++i) {
         Item *it = &g_items[i];
-        unsigned char req[3], r[256];
+        unsigned char req[8], r[256];
         int n, base;
+        if (it->route && !ext_on[it->module & 0xFF]) {          /* extended session for routed values */
+            unsigned char s3[2] = {0x10, 0x03};
+            uds(fd, (unsigned char)it->module, s3, 2, r, sizeof r, 2.0);
+            ext_on[it->module & 0xFF] = 1;
+        }
+        if (it->route == 2) {                                   /* temporary dynamic DID F300 */
+            unsigned char clr[4] = {0x2C, 0x03, 0xF3, 0x00};
+            unsigned char def[8] = {0x2C, 0x01, 0xF3, 0x00, (unsigned char)(it->id >> 8), (unsigned char)it->id, 0x01,
+                                    (unsigned char)(it->off + it->len)};
+            unsigned char rd[3] = {0x22, 0xF3, 0x00};
+            uds(fd, (unsigned char)it->module, clr, 4, r, sizeof r, 2.0);
+            uds(fd, (unsigned char)it->module, def, 8, r, sizeof r, 2.0);
+            n = uds(fd, (unsigned char)it->module, rd, 3, r, sizeof r, 2.0);
+            uds(fd, (unsigned char)it->module, clr, 4, req, sizeof req, 2.0);
+            base = 3;
+            if (n < 3 || r[0] != 0x62) n = -1;
+            goto decode;
+        }
         if (it->obd) {
             req[0] = 0x01; req[1] = (unsigned char)it->id; base = 2;
             n = uds(fd, (unsigned char)it->module, req, 2, r, sizeof r, 2.0);
@@ -305,6 +328,7 @@ static void read_items(int fd, Health *h) {
             n = uds(fd, (unsigned char)it->module, req, 3, r, sizeof r, 2.0);
             if (n < 3 || r[0] != 0x62) n = -1;
         }
+    decode:
         it->valid = 0;
         if (n < 0 || base + it->off + it->len > n) continue;
         unsigned long raw = 0;
@@ -316,6 +340,8 @@ static void read_items(int fd, Health *h) {
         if (it->module == DME) h->engine_answer = 1;
         if (it->obd && it->id == 0x0C) h->running = it->value > 400;
     }
+    for (int m = 0; m < 256; ++m)                               /* back to the default session */
+        if (ext_on[m]) { unsigned char s1[2] = {0x10, 0x01}; unsigned char rr[16]; uds(fd, (unsigned char)m, s1, 2, rr, sizeof rr, 2.0); }
     unsigned char req[3] = {0x22, 0xD1, 0x0D}, r[32];
     int n = uds(fd, KOMBI, req, 3, r, sizeof r, 2.0);
     h->odo_km = (n >= 7 && r[0] == 0x62) ? ((long)r[3] << 24) | (r[4] << 16) | (r[5] << 8) | r[6] : -1;
