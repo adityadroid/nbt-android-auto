@@ -265,12 +265,14 @@ void poll() {
             printf("AA_MIC %s released (shared with the car's hands-free)\n", g_cur.endpoint);
         }
         if (g_voice) g_voice->deactivate("phone closed the mic");
+        unlink("/fs/ram3/nbt-aa-mic");   // nbt_knob: microphone closed (valinet's Assistant mute over b8)
         aa_audio::onMic(false);
         return;
     }
     printf("AA_MIC phone opened the mic\n");
     if (!g_nsrc) return;
     if (g_voice) g_voice->activate("phone opened the mic");   // first: the scenario routes the mic to the endpoint
+    if (FILE* mf = fopen("/fs/ram3/nbt-aa-mic", "w")) fclose(mf);   // nbt_knob: microphone open (Assistant mute)
     aa_audio::onMic(true);
     if (g_capture || g_open_failed) return;
     if (!startFrom(g_next_index)) {
@@ -285,6 +287,7 @@ void shutdown() {
         if (!g_capture->abandoned()) delete g_capture;   // a thread stuck in the library keeps its object
         g_capture = 0;
     }
+    unlink("/fs/ram3/nbt-aa-mic");   // a mic the phone did not close
     if (g_voice) g_voice->deactivate("session ended");
     g_session = 0;
 }
