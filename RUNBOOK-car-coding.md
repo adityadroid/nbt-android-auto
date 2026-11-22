@@ -54,12 +54,11 @@ For each feature (mirror fold on lock, auto start/stop default, lock confirm lig
 5. Tell me the location; I add the name so it shows up labelled.
 
 Modules: mirror fold / start-stop / lock confirm → CAS; welcome lights → FRM; needle sweep → KOMBI.
-(CAS uses a different, non-RSA signature we have not cracked, so CAS is read/diff only for now — no writing yet.)
+(CAS uses AES-128-CMAC, not RSA — now implemented and NIST-proven. CAS becomes writable once a full CAS read reproduces its 16-byte tag, same as FRM/KOMBI. Still last, being the immobiliser.)
 
 ## D. First real write — FRM only, carefully (after B verified FRM)
 
-Only once FRM's signer verified (step B) and a backup exists. FRM (lights) is the safe first write; CAS is last and not
-yet writable. The tool keeps a full backup on every read; the write is gated (`write.commit`, owner unlock string).
+Only once FRM's signer verified (step B) and a backup exists. FRM (lights) is the safe first write; CAS (AES-CMAC, now implemented) is last, being the immobiliser. The tool keeps a full backup on every read; the write is gated (`write.commit`, owner unlock string).
 We do this together, one setting, read back, confirm the effect, keep the backup to revert.
 
 ## Safety
