@@ -10,7 +10,7 @@ T=i486-pc-nto-qnx6.5.0
 W=`pwd`
 OUT=$W/out
 A=$W/src/android_auto
-PROGRAMS=${PROGRAMS:-"oneplus_native native_service decode_runner fifo_http nbt_knob nbt_hwvideo nbt_cluster audioconn micprobe libNbtAndroidAuto.so"}
+PROGRAMS=${PROGRAMS:-"oneplus_native native_service decode_runner fifo_http nbt_knob nbt_hwvideo nbt_cluster audioconn micprobe nbt_key nbt_reset nbt_a2i_beep nbt_decoder libNbtAndroidAuto.so"}
 CC="$T-gcc"
 CXX="$T-g++ -O1 -Wall -D_QNX_SOURCE -std=gnu++0x"
 LIBS="-lqnxopen"
@@ -44,7 +44,8 @@ if want oneplus_native; then
   # car microphone (aa_mic): NBT-AAD's voice scenario on the knob's DSI client (original-NBT libsys_dsi_colibry.so.3)
   $CXX -I$A/knob/ref -I$W/reference/src -c $W/reference/src/audio/voice_scenario.cpp -o $W/voice_scenario.o
   $CXX -I$A/knob/ref -c $A/knob/ref/dsi_client.cpp -o $W/dsi_client.o
-  $CXX $AAINC aa_video_capture.cpp aa_audio.cpp aa_mic.cpp a2i_capture.cpp tls_usb_probe.cpp $W/voice_scenario.o $W/dsi_client.o \
+  # aa_media_out + aa_mic_multich: valinet/nbt-android-auto (sound into input_stereo_1 = f6, plain mic capture)
+  $CXX $AAINC aa_video_capture.cpp aa_audio.cpp aa_media_out.cpp aa_mic.cpp aa_mic_multich.cpp a2i_capture.cpp tls_usb_probe.cpp $W/voice_scenario.o $W/dsi_client.o \
     $W/oneplus_aoa.o $W/core/aa_cryptor.o $W/libnbt_aa_core.a \
     $TLSLIBS -lsocket -lm -lusbdi $LIBS -o $OUT/oneplus_native
   cd $W
@@ -61,6 +62,25 @@ if want nbt_cluster; then echo "== nbt_cluster"; $CXX -Iref nbt_cluster.cpp ref/
 if want audioconn; then echo "== audioconn"; $CXX -Iref nbt_audioconn.cpp ref/dsi_client.cpp ref/most/client.cpp $LIBS -o $OUT/audioconn; fi
 if want micprobe; then echo "== micprobe"; $CXX -Iref -I$A -I$W/reference/src nbt_micprobe.cpp $A/a2i_capture.cpp ref/dsi_client.cpp \
   $W/reference/src/audio/voice_scenario.cpp $LIBS -o $OUT/micprobe; fi
+if want nbt_key; then echo "== nbt_key (test tool)"; $CXX -Iref nbt_key.cpp ref/dsi_client.cpp ref/most/client.cpp $LIBS -o $OUT/nbt_key; fi
+if want nbt_a2i_beep; then echo "== nbt_a2i_beep (test tool)"; $CC -Wall $A/audio/nbt_a2i_beep.c -lm $LIBS -o $OUT/nbt_a2i_beep; fi
+if want nbt_reset; then echo "== nbt_reset (Restart system)"; $CC -O2 -Wall -Wextra $W/src/idrive/reboot/nbt_reset.c -lsocket $LIBS -o $OUT/nbt_reset; fi
+# nbt_decoder (valinet's decoder mode): FFmpeg 2.8.22 H.264 decoder, prepared by build_open.py (scripts/ffmpeg_qnx.py),
+# compiled here with our gcc by valinet's build-ffmpeg-qnx.sh (cached between builds in build/ffmpeg-cache)
+if want nbt_decoder; then
+  echo "== nbt_decoder (decoder mode: FFmpeg + the car's video interface)"
+  cd $W
+  if test ! -f ffmpeg-config/KEY; then
+    echo "SKIPPED: no FFmpeg sources (build_open.py could not prepare them; is yasm installed?)"
+  elif FFCC="$CC" FFWC="" FFAR=$AR FFCACHE=/repo/build/ffmpeg-cache sh build-ffmpeg-qnx.sh > ffmpeg.log 2>&1; then
+    tail -3 ffmpeg.log
+    $CC -O2 -Wall -Wextra -std=gnu99 -I$W/ffmpeg-lib/include -I$W/ffmpeg $A/decoder/nbt_decoder.c \
+      $W/ffmpeg-lib/libavcodec.a $W/ffmpeg-lib/libavutil.a -lm $LIBS -o $OUT/nbt_decoder
+  else
+    tail -40 ffmpeg.log; exit 1
+  fi
+  cd $A/knob
+fi
 cd $W
 # HMI plugin libNbtAndroidAuto.so, without the NBT's HMI libraries: it is linked against STUB libraries that only carry
 # the names (SONAME) and the symbols it imports (libAppFramework.A.so, libCoreFramework.A.so, Dinkum libcpp-ne.so.4).
@@ -82,6 +102,8 @@ void _ZN3bmw9PluginAppD1Ev(void) {}
 void _ZNK3bmw6Parcel8readBoolERb(void) {}
 void _ZN3bmw9PluginApp33cdsAddPropertyChangedEventHandlerERNS_11BasicStringIcEEjRKNS_8DelegateIbRKNS1_ItEEvvvEE(void) {}
 void _ZN3bmw9PluginApp19cdsGetPropertyAsyncERNS_11BasicStringIcEERKNS_8DelegateIbRKNS1_ItEEvvvEE(void) {}
+void _ZN3bmw9PluginApp5startEv(void) {}
+void _ZN3bmw9PluginApp11updateModelEji(void) {}
 EOS
   echo 'void _ZN3bmw6TextIDC1Ej(void) {}' > $S/core.c
   printf 'void _Znwj(void) {}\nvoid _ZdlPv(void) {}\nvoid __cxa_pure_virtual(void) {}\n' > $S/cpp.c

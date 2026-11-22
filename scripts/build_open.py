@@ -24,6 +24,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from build_all import PROGRAMS, ROOT, Archive, add_mbedtls, add_nbt_aad, add_repo_sources  # noqa: E402
+from ffmpeg_qnx import add_ffmpeg  # noqa: E402
 
 
 def main():
@@ -44,10 +45,12 @@ def main():
     add_mbedtls(archive)
     add_nbt_aad(archive, args.nbt_aad.resolve())
     add_repo_sources(archive)
+    add_ffmpeg(archive)   # FFmpeg for nbt_decoder (valinet decoder mode)
     archive.close()
     with tarfile.open(archive_path) as tar:
         tar.extractall(work)
     shutil.copy(ROOT / "scripts/build-open.sh", work / "build-open.sh")
+    shutil.copy(ROOT / "scripts/build-ffmpeg-qnx.sh", work / "build-ffmpeg-qnx.sh")
 
     env = ["-e", "PROGRAMS=" + args.programs] if args.programs else []
     rel = work.relative_to(ROOT).as_posix()
