@@ -37,7 +37,13 @@ if test -e $P/res720; then touch $R/res720; echo 'res720 on'; fi
 #   Back to Bluetooth:  touch $P/bt-audio   (rm $P/bt-audio = Android Auto sound again)
 #   Optional experiment: $P/aa-audio, first line another connection id ("0" = play without a route)
 # A refused / unanswered route switches to Bluetooth by itself until the next reboot ($R/audio-route.failed).
-rm -f $R/aa-audio $R/audioconn $R/bt-audio
+rm -f $R/aa-audio $R/audioconn $R/bt-audio $R/audio-browser $R/media-jack $R/prompts-off $R/mic-multich
+# Sound route since the valinet merge (native_service set_audio): default = valinet's source f6 (input_stereo_1) with
+# prompts over b8. touch $P/audio-browser = our earlier b8 route (proven on the F10); $P/media-jack = phone jack into AUX;
+# $P/prompts-off = no prompts over other sources; $P/mic-multich = valinet's plain mic capture instead of ours.
+for f in audio-browser media-jack prompts-off mic-multich; do
+  if test -e $P/$f; then touch $R/$f; echo "audio: $f"; fi
+done
 if test -f $P/audioconn; then cp $P/audioconn $R/audioconn && chmod 700 $R/audioconn; fi
 if test -e $P/aa-audio; then cp $P/aa-audio $R/aa-audio; fi
 if test -e $P/bt-audio; then

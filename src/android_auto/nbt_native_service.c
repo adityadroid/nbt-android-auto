@@ -151,7 +151,16 @@ static void set_mic_and_bluetooth(void)
         snprintf(v, sizeof(v), "%u", pick);
         setenv("NBT_MIC_PICK", v, 1);
         printf("mic: car microphone from %s (%u Hz x%u, channel %u; mic-endpoint)\n", w, rate, ch, pick);
+    } else if (!access("mic-multich", F_OK)) {
+        /* valinet's aa_mic_multich: its own defaults (/output_multich_0, 22050 Hz, 4 channels, channels 0+1). It does not
+         * switch on the hands-free scenario, which this car needed for sound (car 2026-11-20). */
+        setenv("NBT_MIC_IMPL", "multich", 1);
+        unsetenv("NBT_MIC_ENDPOINT");
+        unsetenv("NBT_MIC_RATE");
+        unsetenv("NBT_MIC_CHANNELS");
+        printf("mic: valinet's capture (mic-multich)\n");
     } else {
+        unsetenv("NBT_MIC_IMPL");
         setenv("NBT_MIC_ENDPOINT", "/output_mono_MIC_Prepro", 1);
         setenv("NBT_MIC_RATE", "44100", 1);
         setenv("NBT_MIC_CHANNELS", "1", 1);
@@ -275,7 +284,13 @@ static void set_audio_mode(void)
  *                  plays go into input_stereo_3 over connection b8 (nbt_knob builds it). */
 static void set_audio(void)
 {
-    if (!access("bt-audio", F_OK) || !access("audio-browser", F_OK)) {
+    /* The route is chosen once per service start: nbt_knob is started once and keeps the environment it got, so a
+     * flag file touched later must not move the session to a route the knob does not know (review 2026-11-22). Our
+     * browser route can still fall back to Bluetooth per session inside set_audio_mode(). */
+    static int route = -1; /* 0 valinet (f6 / media-jack), 1 bt-audio or audio-browser */
+    if (route < 0)
+        route = (!access("bt-audio", F_OK) || !access("audio-browser", F_OK)) ? 1 : 0;
+    if (route == 1) {
         unsetenv("NBT_AA_MEDIA_OUT");
         unsetenv("NBT_AA_PROMPT_OUT");
         setenv("NBT_PROMPT_CONN", "0", 1);
@@ -286,6 +301,7 @@ static void set_audio(void)
         setenv("NBT_NAV_AUDIO", "0", 1);
         setenv("NBT_WHEEL_AUX_ONLY", "0", 1);
         setenv("NBT_AUX_OPENS_AA", "0", 1);
+        unsetenv("NBT_GUIDANCE_BT"); /* the SDR builder's own rule again (prompts over Bluetooth in bt mode) */
         set_audio_mode(); /* bt-audio -> Bluetooth, else our browser route (or Bluetooth if it cannot run) */
         return;
     }
