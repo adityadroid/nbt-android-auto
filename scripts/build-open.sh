@@ -10,7 +10,7 @@ T=i486-pc-nto-qnx6.5.0
 W=`pwd`
 OUT=$W/out
 A=$W/src/android_auto
-PROGRAMS=${PROGRAMS:-"oneplus_native native_service decode_runner fifo_http nbt_knob nbt_hwvideo nbt_cluster audioconn micprobe nbt_key nbt_reset nbt_health nbt_a2i_beep nbt_decoder libNbtAndroidAuto.so"}
+PROGRAMS=${PROGRAMS:-"oneplus_native native_service decode_runner fifo_http nbt_knob nbt_hwvideo nbt_cluster audioconn micprobe nbt_key nbt_reset nbt_health nbt_a2i_beep nbt_decoder libNbtAndroidAuto.so libNbtCarHealth.so"}
 CC="$T-gcc"
 CXX="$T-g++ -O1 -Wall -D_QNX_SOURCE -std=gnu++0x"
 LIBS="-lqnxopen"
@@ -87,8 +87,8 @@ cd $W
 # the names (SONAME) and the symbols it imports (libAppFramework.A.so, libCoreFramework.A.so, Dinkum libcpp-ne.so.4).
 # The result has the same NEEDED list as the SDP-built plugin, so on the car HmiMain3D's real libraries resolve every
 # symbol; nothing of the stubs is ever loaded. -z defs: any import missing from the stubs fails the build.
-if want libNbtAndroidAuto.so; then
-  echo "== HMI plugin libNbtAndroidAuto.so (stub-linked)"
+if want libNbtAndroidAuto.so || want libNbtCarHealth.so; then
+  echo "== HMI plugin stubs"
   S=$W/hmi-stubs
   mkdir -p $S
   cat > $S/app.c <<'EOS'
@@ -112,9 +112,20 @@ EOS
   $CC -shared -fPIC -nostdlib -Wl,-soname,libAppFramework.A.so $S/app.c -o $S/libAppFramework.A.so
   $CC -shared -fPIC -nostdlib -Wl,-soname,libCoreFramework.A.so $S/core.c -o $S/libCoreFramework.A.so
   $CC -shared -fPIC -nostdlib -Wl,-soname,libcpp-ne.so.4 $S/cpp.c -o $S/libcpp-ne.so.4
+fi
+if want libNbtAndroidAuto.so; then
+  echo "== HMI plugin libNbtAndroidAuto.so (stub-linked)"
   cd $W/src/idrive
   $T-g++ -O2 -Wall -Wextra -D_QNX_SOURCE -DNBT_OPEN_TOOLCHAIN -shared -fPIC -fno-exceptions -fno-rtti -nodefaultlibs -Wl,-z,defs \
     aa_entry_plugin.cpp -o $OUT/libNbtAndroidAuto.so -L$S -lAppFramework.A -lCoreFramework.A $S/libcpp-ne.so.4 -lc -lgcc
+  cd $W
+fi
+# "Car health" under Vehicle Info: its own HMI plugin (src/idrive/carhealth), same stubs
+if want libNbtCarHealth.so; then
+  echo "== HMI plugin libNbtCarHealth.so (stub-linked)"
+  cd $W/src/idrive/carhealth
+  $T-g++ -O2 -Wall -Wextra -D_QNX_SOURCE -DNBT_OPEN_TOOLCHAIN -shared -fPIC -fno-exceptions -fno-rtti -nodefaultlibs -Wl,-z,defs \
+    carhealth_plugin.cpp -o $OUT/libNbtCarHealth.so -L$S -lAppFramework.A -lCoreFramework.A $S/libcpp-ne.so.4 -lc -lgcc
   cd $W
 fi
 echo "== built"

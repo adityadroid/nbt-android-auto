@@ -77,6 +77,8 @@ def main():
                 print("reused from", args.reuse.name + ":", name)
     resources = out / "plugin-resources"
     subprocess.run([sys.executable, str(ROOT / "src/idrive/make_aa_entry_resources.py"), str(resources)], check=True)
+    subprocess.run([sys.executable, str(ROOT / "src/idrive/carhealth/make_carhealth_resources.py"),
+                    str(out / "carhealth-resources")], check=True)
     shutil.copy(ROOT / "scripts/nbt-aa-boot.sh", programs / "boot.sh")
     shutil.copy(ROOT / "scripts/nbt-aa-restart.sh", programs / "restart.sh")
     print("programs:", programs)

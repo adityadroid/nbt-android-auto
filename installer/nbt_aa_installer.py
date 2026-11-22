@@ -39,6 +39,7 @@ APP_NAME = 'NBT Android Auto Installer'
 DEFAULT_HOST = '169.254.199.99'
 RT_DIR = '/var/opt/hmi/data/rw/NbtAndroidAutoRT'
 PLUGIN_DIR = '/var/opt/hmi/data/rw/Plugins/NbtAndroidAuto'
+CARHEALTH_DIR = '/var/opt/hmi/data/rw/Plugins/NbtCarHealth'   # "Car health" under Vehicle Info
 
 
 def payload_dir():
@@ -291,8 +292,11 @@ def uninstall(nbt, log, root=''):
         log('  stopping the Android Auto service')
         nbt.run('slay -f -Q -s TERM native_service', check=False)
         nbt.run('slay -f -Q -s TERM nbt_cluster', check=False)     # hides its cluster graphics on exit
+        nbt.run('slay -f -Q -s TERM nbt_health', check=False)
         time.sleep(3)
-    for directory in (PLUGIN_DIR, RT_DIR):
+    for directory in (CARHEALTH_DIR, PLUGIN_DIR, RT_DIR):
+        if directory == CARHEALTH_DIR and nbt.run("test -e '%s'" % (root + directory), check=False)[0] != 0:
+            continue                                   # older installs have no Car health plugin
         nbt.run("rm -r '%s'" % (root + directory), check=False)
         still = nbt.run("test -e '%s'" % (root + directory), check=False)[0] == 0
         log('  %s %s' % ('NOT removed' if still else 'removed', directory))
@@ -308,6 +312,7 @@ def save_logs(nbt, log, target_zip, root=''):
         if code == 0:
             sources += [directory + '/' + name for name in out.decode('utf-8', 'replace').split()]
     sources += ['/fs/ram3/nbt-aa-plugin.log', '/fs/ram3/nbt-aa-boot.log', '/fs/ram3/nbt-aa-state', '/fs/ram3/nbt-cluster.log',
+                '/fs/ram3/nbt-health.err', '/fs/ram3/nbt-health.log', '/fs/ram3/nbt-health.txt', '/fs/ram3/nbt-carhealth.log',
                 root + RT_DIR + '/VERSION', root + RT_DIR + '/vid.dpi']
     count = 0
     with zipfile.ZipFile(target_zip, 'w', zipfile.ZIP_DEFLATED) as archive:

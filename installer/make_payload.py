@@ -20,6 +20,7 @@ REPO = Path(__file__).resolve().parent.parent
 OUT = REPO / 'installer' / 'payload'
 RT = '/var/opt/hmi/data/rw/NbtAndroidAutoRT'
 PLUGIN = '/var/opt/hmi/data/rw/Plugins/NbtAndroidAuto'
+CARHEALTH = '/var/opt/hmi/data/rw/Plugins/NbtCarHealth'   # "Car health" under Vehicle Info
 ENTRY = REPO / 'build' / 'aa-entry-20261106'
 PROTO = REPO / 'build' / 'native-prototype-20261106' / 'package'
 # (local source, payload name, target path on the car, mode)
@@ -72,6 +73,13 @@ def built_files(built, pem_dir):
     # Car health page data (src/health/nbt_health.c), started by boot.sh; idle unless the page is open
     if (programs / 'nbt_health').is_file():
         result.append((programs / 'nbt_health', 'rt/nbt_health', RT + '/nbt_health', '700'))
+    # its own HMI plugin under Vehicle Info (src/idrive/carhealth); the installer writes every .manifest last
+    if (programs / 'libNbtCarHealth.so').is_file():
+        res = built / 'carhealth-resources'
+        for leaf, folder, mode in (('libNbtCarHealth.so', programs, '755'), ('NbtCarHealth.xml', res, '644'),
+                                   ('NbtCarHealth_ALL_Texts.zip', res, '644'), ('NbtCarHealth_ALL_Images.zip', res, '644'),
+                                   ('NbtCarHealth.manifest', res, '644')):
+            result.append((folder / leaf, 'carhealth/' + leaf, CARHEALTH + '/' + leaf, mode))
     return result
 
 

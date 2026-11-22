@@ -122,7 +122,9 @@ if test -f $P/nbt_health -a ! -e $P/health.off; then
     echo "car health already running (pid $HP)"
   else
     cp $P/nbt_health $R/nbt_health && chmod 700 $R/nbt_health
-    (cd $R; ./nbt_health </dev/null >/dev/null 2>&1 & echo $! > /fs/ram3/nbt-health.pid)
+    # explicit library path like every program here (car 2026-11-22: started without it, nbt_health never wrote a row;
+    # nbt_reset 2026-11-12: "Could not load library libsocket.so.3" without the HMI's path). Errors: nbt-health.err
+    (cd $R; LD_LIBRARY_PATH=/proc/boot:/lib:/usr/lib:/lib/dll:/opt/sys/lib ./nbt_health </dev/null >/fs/ram3/nbt-health.err 2>&1 & echo $! > /fs/ram3/nbt-health.pid)
     echo "car health started pid=`sed 1q /fs/ram3/nbt-health.pid`"
   fi
 fi
