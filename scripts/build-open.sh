@@ -10,7 +10,7 @@ T=i486-pc-nto-qnx6.5.0
 W=`pwd`
 OUT=$W/out
 A=$W/src/android_auto
-PROGRAMS=${PROGRAMS:-"oneplus_native native_service decode_runner fifo_http nbt_knob nbt_hwvideo nbt_cluster audioconn micprobe nbt_key nbt_reset nbt_a2i_beep nbt_decoder libNbtAndroidAuto.so"}
+PROGRAMS=${PROGRAMS:-"oneplus_native native_service decode_runner fifo_http nbt_knob nbt_hwvideo nbt_cluster audioconn micprobe nbt_key nbt_reset nbt_health nbt_a2i_beep nbt_decoder libNbtAndroidAuto.so"}
 CC="$T-gcc"
 CXX="$T-g++ -O1 -Wall -D_QNX_SOURCE -std=gnu++0x"
 LIBS="-lqnxopen"
@@ -64,6 +64,7 @@ if want micprobe; then echo "== micprobe"; $CXX -Iref -I$A -I$W/reference/src nb
   $W/reference/src/audio/voice_scenario.cpp $LIBS -o $OUT/micprobe; fi
 if want nbt_key; then echo "== nbt_key (test tool)"; $CXX -Iref nbt_key.cpp ref/dsi_client.cpp ref/most/client.cpp $LIBS -o $OUT/nbt_key; fi
 if want nbt_a2i_beep; then echo "== nbt_a2i_beep (test tool)"; $CC -Wall $A/audio/nbt_a2i_beep.c -lm $LIBS -o $OUT/nbt_a2i_beep; fi
+if want nbt_health; then echo "== nbt_health (Car health)"; $CC -std=gnu99 -O2 -Wall -Wextra -D_QNX_SOURCE $W/src/health/nbt_health.c -lsocket $LIBS -o $OUT/nbt_health; fi
 if want nbt_reset; then echo "== nbt_reset (Restart system)"; $CC -O2 -Wall -Wextra $W/src/idrive/reboot/nbt_reset.c -lsocket $LIBS -o $OUT/nbt_reset; fi
 # nbt_decoder (valinet's decoder mode): FFmpeg 2.8.22 H.264 decoder, prepared by build_open.py (scripts/ffmpeg_qnx.py),
 # compiled here with our gcc by valinet's build-ffmpeg-qnx.sh (cached between builds in build/ffmpeg-cache)
@@ -104,6 +105,7 @@ void _ZN3bmw9PluginApp33cdsAddPropertyChangedEventHandlerERNS_11BasicStringIcEEj
 void _ZN3bmw9PluginApp19cdsGetPropertyAsyncERNS_11BasicStringIcEERKNS_8DelegateIbRKNS1_ItEEvvvEE(void) {}
 void _ZN3bmw9PluginApp5startEv(void) {}
 void _ZN3bmw9PluginApp11updateModelEji(void) {}
+void _ZN3bmw9PluginApp11updateModelEjPKc(void) {}
 EOS
   echo 'void _ZN3bmw6TextIDC1Ej(void) {}' > $S/core.c
   printf 'void _Znwj(void) {}\nvoid _ZdlPv(void) {}\nvoid __cxa_pure_virtual(void) {}\n' > $S/cpp.c

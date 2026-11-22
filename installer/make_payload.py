@@ -69,6 +69,9 @@ def built_files(built, pem_dir):
     # "Restart system" on the Android Auto page (src/idrive/reboot); the car-specific "gateway" file next to it is left as
     # it is on the car
     result.append((programs / 'nbt_reset', 'rt/nbt_reset', RT + '/nbt_reset', '700'))
+    # Car health page data (src/health/nbt_health.c), started by boot.sh; idle unless the page is open
+    if (programs / 'nbt_health').is_file():
+        result.append((programs / 'nbt_health', 'rt/nbt_health', RT + '/nbt_health', '700'))
     return result
 
 

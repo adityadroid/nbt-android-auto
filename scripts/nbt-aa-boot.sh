@@ -113,6 +113,20 @@ if test -f $P/nbt_cluster -a ! -e $P/cluster-off; then
   echo 'cluster guidance started'
 fi
 
+# Car health page data (src/health/nbt_health.c): idle until the "Car health" page is open, then asks the car's gateway
+# for engine values, odometer and fault memory (read-only). One copy per head-unit boot: boot.sh also runs on every
+# service restart. Disable: touch $P/health.off
+if test -f $P/nbt_health -a ! -e $P/health.off; then
+  HP=`sed 1q /fs/ram3/nbt-health.pid 2>/dev/null`
+  if test -n "$HP" && kill -0 $HP 2>/dev/null; then
+    echo "car health already running (pid $HP)"
+  else
+    cp $P/nbt_health $R/nbt_health && chmod 700 $R/nbt_health
+    (cd $R; ./nbt_health </dev/null >/dev/null 2>&1 & echo $! > /fs/ram3/nbt-health.pid)
+    echo "car health started pid=`sed 1q /fs/ram3/nbt-health.pid`"
+  fi
+fi
+
 # Diagnostic logs on PERSISTENT storage (car 2026-11-07: after an Android Auto drop-out SSH only worked again after a
 # restart, and the RAM logs were gone). Written only when the public state changes (connecting, running, draining, ...),
 # so the flash sees a few small writes per session. The previous boot's set is kept as logs.prev.
