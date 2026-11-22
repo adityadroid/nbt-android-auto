@@ -1296,7 +1296,8 @@ int main(int argc, char** argv)
                      * only a restart fixed. */
                     /* only while the Android Auto page is on screen: every start takes VideoApp's sink (StopVideo, Set
                      * source 0x16), which would interrupt the reverse camera or a DVD that made it give up */
-                    if (hw && !live && !alive(&hwv) && hwv_restarts < 6 && ms() - last_hwv >= 10000 &&
+                    /* not in decoder mode: nbt_decoder shows the picture, nbt_hwvideo is never started there */
+                    if (hw && !live && !dmode && !alive(&hwv) && hwv_restarts < 6 && ms() - last_hwv >= 10000 &&
                         access("/fs/ram3/nbt-aa-hidden", F_OK)) {
                         char line[64];
                         snprintf(line, sizeof(line), "%d", WIFEXITED(hwv.status) ? WEXITSTATUS(hwv.status) : -1);
