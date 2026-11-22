@@ -16,7 +16,7 @@
  *   src: obd (service 01 PID) or did (service 22 DID) on module (hex); offset/length: bytes of the data after the
  *   echoed PID/DID, big-endian; value = raw*factor+add; limits may be empty; when: run (limits only with the engine
  *   running), off (only with it stopped) or any. A label listed twice (run and off) shows the line for the state now.
- * faults.tab: "MODULE DTC text" per line, e.g. "DME 24F7 Example fault text".
+ * faults.tab: "MODULE DTC text" per line, DTC = all three bytes, e.g. "DME 24F700 Fuel filter heater circuit open".
  *
  * Plain C99 + BSD sockets: builds with the open QNX 6.5 gcc and with any desktop compiler.
  */
@@ -61,6 +61,7 @@ static const char *VERDICT[] = {"", "OK", "watch", "ACT"};
 static const struct { unsigned char addr; const char *name; } MODULES[] = {
     {0x12, "DME"}, {0x18, "EGS"}, {0x29, "DSC"}, {0x30, "EPS"}, {0x01, "ACSM"}, {0x40, "CAS"}, {0x72, "FRM"},
     {0x60, "KOMBI"}, {0x56, "FZD"}, {0x64, "PDC"}, {0x78, "IHKA"}, {0x17, "EKPS"}, {0x1C, "ICM"}, {0x5F, "FLA"},
+    {0x63, "NBT"}, {0x10, "ZGW"},
 };
 #define NMOD (int)(sizeof(MODULES) / sizeof(MODULES[0]))
 
@@ -333,8 +334,8 @@ static void read_faults(int fd, Health *h) {
             if (r[i + 3] & 0x03) {           /* bit0 failing now, bit1 failed during this drive */
                 active++;
                 if (h->nactive_rows < ROWS) {
-                    unsigned code = (r[i] << 8) | r[i + 1];
-                    snprintf(h->active_list[h->nactive_rows++], ROW_LEN, "%s %04X %s", MODULES[m].name, code,
+                    unsigned code = ((unsigned)r[i] << 16) | (r[i + 1] << 8) | r[i + 2];
+                    snprintf(h->active_list[h->nactive_rows++], ROW_LEN, "%s %06X %s", MODULES[m].name, code,
                              fault_text(MODULES[m].name, code));
                 }
             } else stored++;

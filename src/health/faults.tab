@@ -1,1 +1,15 @@
-# Fault names for nbt_health: "MODULE DTC text" (DTC = first two bytes, hex). Keep text short (~30 chars).
+# Fault names for nbt_health: "MODULE DTC text" (DTC = all three bytes, hex). Keep text short (~30 chars).
+# Texts from BMW SGBD fault tables (emdzej docs: d73n57e0, cas4_2, komb01, nbt, frm3, ihka01, zgw_01), shortened.
+DME 24F700 Fuel filter heater circuit open
+CAS 93076B Parked power cut (30B budget)
+CAS 9308A7 Rear remote battery low
+KOMBI B7F67D Cluster watchdog reset
+NBT B7F84D Mic 1 wire open
+NBT B7F884 Head unit flash file error
+NBT B7F8AE Rear screens Ethernet no link
+NBT B7F8E5 SSH mode active (our unlock)
+NBT E1C440 Head unit reset
+FRM 800F93 Home-light repeat lock
+IHKA 8011CE Volume knob stuck
+ZGW 801C15 Did not sleep properly (30B)
+ZGW 801C20 Central fault memory full
