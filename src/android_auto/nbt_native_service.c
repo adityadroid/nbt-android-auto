@@ -22,8 +22,9 @@
  *   gate.mode   only touch the phone after the HMI page was opened
  *   bt-audio    Bluetooth sound instead of the default Android Auto sound (see set_audio_mode)
  *   aa-audio    optional: another ConnectionMaster connection for the Android Auto sound (experiment)
- *   audio-browser  our earlier sound route (NBT-AAD BrowserAudio, connection b8 for everything) instead of valinet's
- *               f6 main source + b8 prompts (the default since the valinet merge, 2026-11-22)
+ *   audio-f6    valinet's sound route: media as main source f6 + prompts over b8. NOT the default: on this F10 (6FH rear
+ *               entertainment) iDrive showed "selected audio source in rear is not operable from the front" with it
+ *               (car 2026-11-22). Default = our route (NBT-AAD BrowserAudio over b8). audio-browser = the same default.
  *   media-jack  valinet's cable setup: the phone plays on its 3.5 mm jack into AUX, no media channel
  *   decoder.mode  with nbt_decoder present (boot.sh: always, unless decoder.off in the package): it decodes and shows
  *               the picture instead of fifo_http + decode_runner + nbt_hwvideo; decoder.60fps = ask the phone for 60 fps
@@ -274,22 +275,24 @@ static void set_audio_mode(void)
         unsetenv("NBT_AUDIOCONN");
 }
 
-/* Which sound route a session uses (valinet merge, 2026-11-22). Runtime-folder flag files:
- *   bt-audio       Bluetooth: the phone's sound stays on Bluetooth (no media channel)
- *   audio-browser  our earlier route: NBT-AAD BrowserAudio -> A2I input_stereo_3 over connection b8 (set_audio_mode);
+/* Which sound route a session uses. Runtime-folder flag files:
+ *   (none)         our route (default): NBT-AAD BrowserAudio -> A2I input_stereo_3 over connection b8 (set_audio_mode);
  *                  proven on this car (F10, 2026-11-20). nbt_knob's audio source handling is switched off for it.
- *   media-jack     valinet's cable setup: the phone plays on its 3.5 mm jack into AUX
- *   (none)         valinet's route (car-tested on an F30 NBT 2026-11-18, aa_media_out.hpp): media into io-amp input
- *                  input_stereo_1 = main source f6, kept by iDrive, steering wheel to us; prompts while another source
- *                  plays go into input_stereo_3 over connection b8 (nbt_knob builds it). */
+ *                  (audio-browser: the same, kept for older setups)
+ *   bt-audio       Bluetooth: the phone's sound stays on Bluetooth (no media channel)
+ *   audio-f6       valinet's route (car-tested on an F30 NBT 2026-11-18, aa_media_out.hpp): media into io-amp input
+ *                  input_stereo_1 = main source f6, prompts while another source plays over b8. Opt-in only: on this
+ *                  F10 with 6FH rear entertainment iDrive warned "selected audio source in rear is not operable from the
+ *                  front" for f6 (car 2026-11-22), so f6 is a rear-entertainment source here.
+ *   media-jack     valinet's cable setup: the phone plays on its 3.5 mm jack into AUX */
 static void set_audio(void)
 {
     /* The route is chosen once per service start: nbt_knob is started once and keeps the environment it got, so a
      * flag file touched later must not move the session to a route the knob does not know (review 2026-11-22). Our
      * browser route can still fall back to Bluetooth per session inside set_audio_mode(). */
-    static int route = -1; /* 0 valinet (f6 / media-jack), 1 bt-audio or audio-browser */
+    static int route = -1; /* 0 valinet (audio-f6 / media-jack), 1 ours (default) or bt-audio */
     if (route < 0)
-        route = (!access("bt-audio", F_OK) || !access("audio-browser", F_OK)) ? 1 : 0;
+        route = (access("bt-audio", F_OK) && (!access("audio-f6", F_OK) || !access("media-jack", F_OK))) ? 0 : 1;
     if (route == 1) {
         unsetenv("NBT_AA_MEDIA_OUT");
         unsetenv("NBT_AA_PROMPT_OUT");
