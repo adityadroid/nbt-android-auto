@@ -17,6 +17,8 @@
 #include "aa_audio.hpp"
 #include "aa_mic.hpp"
 #include "aa_session.hpp"
+#include "aa_media_out.hpp"
+#include "aa_mic_multich.hpp"
 #include <sys/socket.h>
 #include <sys/select.h>
 #include <sys/stat.h>
@@ -354,6 +356,7 @@ struct LiveQueue {
     pthread_mutex_t m;
     pthread_cond_t cv;
     std::deque<std::vector<uint8_t> > items; // H.264 access units
+    std::deque<bool> frame;                  // per item: a video frame (true) or codec config (video flow control)
     size_t bytes;                            // total size of items
     bool stop, dropping;                     // dropping: skipping frames until the next IDR / config
     unsigned dropped, drops;                 // dropped frames, number of drop runs
@@ -383,7 +386,13 @@ struct Capture {
     unsigned received; // every video frame from the phone, both modes (freeze watch; frames counts capture mode only)
     bool live;
     LiveQueue queue;
-    Capture() : socket(-1), data(-1), index(-1), error(0), bytes(0), frames(0), configs(0), frame_limit(300), received(0), live(false)
+    // Video flow control (2026-11-19, AASession::setDeferredVideoAcks): each video frame is reported once it was written
+    // into the decoder FIFO or dropped, and only then acked to the phone; so the phone can be at most its video window
+    // (10 frames) ahead of the decoder. NBT_AA_VIDEO_ACKS=0: acked on arrival as before.
+    nbt::AASession* session;
+    bool vacks;
+    Capture() : socket(-1), data(-1), index(-1), error(0), bytes(0), frames(0), configs(0), frame_limit(300), received(0),
+                live(false), session(0), vacks(false)
     {
         pthread_mutex_init(&mutex, 0);
     }
@@ -399,6 +408,13 @@ bool has_idr(const uint8_t* p, size_t n)
     return false;
 }
 
+// video flow control: frames handed to the decoder or dropped (any thread)
+void video_consumed(Capture* c, unsigned frames)
+{
+    if (frames && c->vacks && c->session)
+        c->session->postVideoConsumed(frames);
+}
+
 // session thread: never blocks on the decoder
 void live_enqueue(Capture* c, const uint8_t* p, size_t n, bool config)
 {
@@ -408,25 +424,32 @@ void live_enqueue(Capture* c, const uint8_t* p, size_t n, bool config)
     if (q.dropping && !restart) {
         ++q.dropped;
         pthread_mutex_unlock(&q.m);
+        video_consumed(c, 1);
         return;
     }
+    unsigned gone = 0;   // queued frames thrown away below
     if (q.bytes + n > kLiveBudget) {
         if (!restart) {
             q.dropping = true;
             ++q.drops;
             ++q.dropped;
             pthread_mutex_unlock(&q.m);
+            video_consumed(c, 1);
             return;
         }
         // a fresh IDR/config does not fit: throw away the old backlog, the decoder restarts on this picture
         while (!q.items.empty() && q.bytes + n > kLiveBudget) {
             q.bytes -= q.items.front().size();
             q.items.pop_front();
+            if (q.frame.front())
+                ++gone;
+            q.frame.pop_front();
             ++q.dropped;
         }
     }
     q.dropping = false;
     q.items.push_back(std::vector<uint8_t>(p, p + n));
+    q.frame.push_back(!config);
     // NBT_AA_PAD (bytes, car 2026-11-07): a static Android Auto screen is only ~600 bytes per frame (~16 KB/s), so any
     // byte-sized input buffer of the decoder chain (HTTP client, demuxer) delays the picture by seconds. Each access
     // unit is padded with one H.264 filler NAL (type 12, ignored by decoders) up to this size.
@@ -445,9 +468,18 @@ void live_enqueue(Capture* c, const uint8_t* p, size_t n, bool config)
         v.insert(v.end(), fill, (uint8_t)0xff);
         v.push_back(0x80); // rbsp trailing bits
     }
+    // End of the picture (2026-11-19): the decoder only knows a NAL unit, and so a picture, is complete when the next
+    // start code arrives, i.e. with the phone's NEXT frame. Waze / the Android Auto screens send ~30-60 frames per second,
+    // YouTube Music only a few, so the knob's focus change showed up late there. An access unit delimiter (type 9) after
+    // each frame starts the next access unit at once; nbt_decoder decodes the picture as soon as it sees it.
+    if (!config) {
+        static const uint8_t aud[6] = {0, 0, 0, 1, 0x09, 0xf0};
+        q.items.back().insert(q.items.back().end(), aud, aud + 6);
+    }
     q.bytes += q.items.back().size();
     pthread_cond_signal(&q.cv);
     pthread_mutex_unlock(&q.m);
+    video_consumed(c, gone);
 }
 
 long long now_ms();
@@ -485,11 +517,15 @@ bool write_all(int fd, const unsigned char* p, size_t n)
 void save(Capture* c, const uint8_t* p, size_t n, uint64_t pts, bool config)
 {
     pthread_mutex_lock(&c->mutex);
+    if (c->live && !config && (c->error || c->frames >= c->frame_limit))
+        video_consumed(c, 1);   // not taken: must not hold the phone's video window
     if (!c->error && c->frames < c->frame_limit) {
         const bool annexb = n >= 4 && p[0] == 0 && p[1] == 0 && (p[2] == 1 || (p[2] == 0 && p[3] == 1));
-        if (!annexb || n > 2 * 1024 * 1024 || (!c->live && n > 8 * 1024 * 1024 - c->bytes))
+        if (!annexb || n > 2 * 1024 * 1024 || (!c->live && n > 8 * 1024 * 1024 - c->bytes)) {
             c->error = 1;
-        else {
+            if (c->live && !config)
+                video_consumed(c, 1);   // refused: must not hold the phone's video window
+        } else {
             if (!config)
                 ++c->received;
             char row[160];
@@ -515,6 +551,23 @@ void save(Capture* c, const uint8_t* p, size_t n, uint64_t pts, bool config)
 void video(uint32_t, const uint8_t* p, size_t n, uint64_t pts, void* v)
 {
     save((Capture*)v, p, n, pts, false);
+}
+
+// Android Auto sound into the car (2026-11-18, aa_media_out.hpp): the service sets NBT_AA_MEDIA_OUT to the io-amp input
+// of the Android Auto audio source (input_stereo_1 = connection f6) and offers the media channel to the phone.
+void media_audio(uint8_t channel, const uint8_t* pcm, size_t len, uint64_t, void*)
+{
+    nbt::mediaout::onAudio(channel, pcm, len);
+}
+
+void media_state(uint8_t channel, bool started, uint32_t rate, uint32_t channels, void*)
+{
+    nbt::mediaout::onState(channel, started, rate, channels);
+}
+
+void media_consumed(uint8_t channel, size_t bytes, void* session)
+{
+    static_cast<nbt::AASession*>(session)->postAudioConsumed(channel, bytes);
 }
 
 // The phone asked for the screen back (car 2026-11-10: the "exit to car" icon in the Android Auto rail, picked with the
@@ -545,10 +598,15 @@ void* reader(void* v)
 {
     Capture* c = (Capture*)v;
     unsigned char b[65536];
+    long long last = 0;   // the phone pings once a second: a longer pause is a stall (logged, this thread only)
     for (;;) {
         unsigned n = sizeof(b);
         if (!c->transfer(c->transport, 1, b, &n) || !n || n > sizeof(b) || !write_all(c->socket, b, n))
             break;
+        const long long t = now_ms();
+        if (last && t - last >= 1500)
+            printf("AA_USB_PAUSE %lld ms without data from the phone, then %u bytes\n", t - last, n);
+        last = t;
     }
     shutdown(c->socket, SHUT_RDWR);
     return 0;
@@ -578,6 +636,8 @@ void* live_writer(void* v)
         std::vector<uint8_t> item;
         item.swap(q.items.front());
         q.items.pop_front();
+        const bool frame = q.frame.front();
+        q.frame.pop_front();
         q.bytes -= item.size();
         pthread_mutex_unlock(&q.m);
         size_t off = 0;
@@ -608,6 +668,8 @@ void* live_writer(void* v)
             printf("AA_LIVE_WRITER_FAILED errno=%d\n", errno);
             return 0;
         }
+        if (frame)
+            video_consumed(c, 1);   // in the decoder FIFO: the phone may send the next one
     }
 }
 
@@ -622,13 +684,13 @@ void stop_live(int)
 //
 // nbt_knob writes "R <key> <delta>" (rotary) / "K <key> <0|1>" (key up/down) lines into this FIFO.
 // Opened O_RDWR so the FIFO never reports EOF when nbt_knob is not running. Only the keys declared on input channel 7
-// are accepted: HOME 3, BACK 4, CALL 5, ENDCALL 6, DPAD 19..23, SEARCH 84 (Assistant), ROTARY 65536, MEDIA 65537,
-// NAVIGATION 65538.
+// are accepted: HOME 3, BACK 4, CALL 5, ENDCALL 6, DPAD 19..23, SEARCH 84, ROTARY 65536, MEDIA 65537, NAVIGATION 65538, and the
+// media keys PLAY_PAUSE 85, NEXT 87, PREVIOUS 88 (steering wheel, 2026-11-12; all in the DHU template's keycodes_supported).
 const char* const kInputFifo = "/fs/ram3/nbt-aa-native/input.fifo";
 
-// Car day/night for Android Auto's night mode (dark maps at night), ported from valinet/nbt-android-auto: this NBT has no
-// day/night car data property, so the headlights stand in. The HMI plugin writes CDS controls.headlights to this file as
-// '{"headlights":N}'; 0 = day, anything else = night. Returns 1 night, 0 day, -1 unknown (keep what the phone has).
+// Car day/night for Android Auto's night mode (dark maps at night). This NBT has no day/night car data property, so the
+// headlights stand in: the HMI plugin writes CDS controls.headlights to this file as '{"headlights":N}'; 0 = day,
+// anything else = night. Returns 1 night, 0 day, -1 unknown (no file, or an error answer: keep what the phone has).
 const char* const kHeadlightsFile = "/fs/ram3/nbt-aa-headlights";
 int car_night()
 {
@@ -652,8 +714,8 @@ int car_night()
 
 bool allowed_key(unsigned k)
 {
-    return k == 3 || k == 4 || k == 5 || k == 6 || (k >= 19 && k <= 23) || k == 84 || k == 65536 || k == 65537 || k == 65538 ||
-           k == 85 || k == 87 || k == 88; // media keys from the steering wheel (126 / 127 dropped the session: valinet fork)
+    return k == 3 || k == 4 || k == 5 || k == 6 || (k >= 19 && k <= 23) || k == 84 || k == 85 || k == 87 || k == 88 ||
+           k == 65536 || k == 65537 || k == 65538;   // 126 / 127 dropped the session (valinet): never sent
 }
 
 struct InputLines {
@@ -765,20 +827,55 @@ extern "C" int nbt_video_capture_run(nbt_capture_transfer transfer, void* contex
     }
     c.socket = pair[1];
     nbt::AASession session;
+    bool media_on = false;   // valinet's media out took the phone's sound (then our browser audio stays off)
     session.setVideoFrameCallback(video, &c);
     session.setCodecConfigCallback(config, &c);
     if (c.live) {
+        const char* va = getenv("NBT_AA_VIDEO_ACKS");
+        c.session = &session;
+        c.vacks = !(va && !strcmp(va, "0"));
+        session.setDeferredVideoAcks(c.vacks);
         session.setNavStatusCallback(nav_status, 0);
         unlink("/fs/ram3/nbt-aa-native/nav.state");
         g_refocus_at = 0;
         session.setVideoFocusCallback(focus_request, 0);
+        const char* media_out = getenv("NBT_AA_MEDIA_OUT");
+        if (media_out && *media_out) {
+            nbt::mediaout::setConsumedCallback(media_consumed, &session);
+            if (nbt::mediaout::start(media_out)) {
+                // acks once played: the phone sends at the speed the car plays (no queue growing, no cuts)
+                session.setDeferredAudioAcks(true);
+                session.setAudioFrameCallback(media_audio, 0);
+                session.setAudioStateCallback(media_state, 0);
+                media_on = true;
+                printf("AA_MEDIA_OUT Android Auto sound -> %s\n", media_out);
+            } else {
+                printf("AA_MEDIA_OUT not available: no Android Auto sound in the car this session\n");
+            }
+        }
+        // car microphone to the phone while it asks for it (Google Assistant, voice search), aa_mic.hpp
+        unlink("/fs/ram3/nbt-aa-voice");   // the voice session flag (session patch voice-session): none yet
     }
-    const bool audio = c.live && aa_audio::setup(session);
-    if (c.live)
+    // Our browser audio (NBT_AUDIO_MODE=browser, connection b8 for everything) only when valinet's media out is not on.
+    const bool audio = c.live && !media_on && aa_audio::setup(session);
+    // Car microphone: one capture only. Default ours (aa_mic: switches on the car's hands-free mic scenario, which this
+    // car needed - the plain capture gave silence); NBT_MIC_IMPL=multich = valinet's plain /output_multich_0 capture.
+    const char* mic_impl = getenv("NBT_MIC_IMPL");
+    const bool mic_multich = mic_impl && !strcmp(mic_impl, "multich");
+    if (c.live && mic_multich)
+        nbt::mic::start(session);
+    else if (c.live)
         aa_mic::setup(session);
     setenv("NBT_VID_RES", "1", 0); // 800x480 unless the service asks for 1280x720 (res720)
+    // Day/night before the session starts: the phone asks for the NIGHT_MODE sensor early and gets this value
+    int night_posted = c.live ? car_night() : -1;
+    if (night_posted >= 0) {
+        session.postNightMode(night_posted != 0);
+        printf("AA_NIGHT car is in %s mode at session start\n", night_posted ? "night" : "day");
+    }
+    long long next_night_check = 0;
     printf("AA_VIDEO_CAPTURE_BEGIN max_seconds=%u max_bytes=8388608 max_frames=%u no_display=1 no_audio_playback=%d\n",
-           seconds, c.frame_limit, audio ? 0 : 1);
+           seconds, c.frame_limit, (audio || media_on) ? 0 : 1);
     if (!session.start(pair[0])) {
         aa_audio::shutdown();
         close(pair[1]);
@@ -834,8 +931,6 @@ extern "C" int nbt_video_capture_run(nbt_capture_transfer transfer, void* contex
     // stopping, a ByeByeRequest goes out and the session keeps pumping both directions for up to 1 s until the phone's
     // ByeByeResponse ends it.
     long long bye_until = 0;
-    int night_posted = -1;
-    long long next_night_check = 0;
     // Freeze watch (user report: "the Android Auto screen freezes sometimes"): no new video frame for 15 s while the
     // page is on screen -> AA_STALL in this log and the flag file below; native_service saves an incident snapshot.
     // (The phone may also send nothing for a still screen, so this is evidence for the log, not an action.)
@@ -881,19 +976,19 @@ extern "C" int nbt_video_capture_run(nbt_capture_transfer transfer, void* contex
                     close(fd);
             }
         }
-        if (c.live && !bye_until && now_ms() >= next_night_check) {
+        if (!bye_until && g_refocus_at && now_ms() >= g_refocus_at) {
+            g_refocus_at = 0;
+            session.postVideoFocus(true);
+            printf("AA_FOCUS projection given back to the phone\n");
+        }
+        if (!bye_until && c.live && now_ms() >= next_night_check) {
             next_night_check = now_ms() + 1000;
             const int n = car_night();
             if (n >= 0 && n != night_posted) {
                 night_posted = n;
                 session.postNightMode(n != 0);
-                printf("AA_NIGHT car headlights %s: Android Auto %s\n", n ? "on" : "off", n ? "night (dark)" : "day");
+                printf("AA_NIGHT car switched to %s mode: Android Auto %s\n", n ? "night" : "day", n ? "dark" : "light");
             }
-        }
-        if (!bye_until && g_refocus_at && now_ms() >= g_refocus_at) {
-            g_refocus_at = 0;
-            session.postVideoFocus(true);
-            printf("AA_FOCUS projection given back to the phone\n");
         }
         if (!bye_until && bg_focus && now_ms() >= next_focus_check && now_ms() - start >= 2000) {
             next_focus_check = now_ms() + 250;
@@ -934,6 +1029,9 @@ extern "C" int nbt_video_capture_run(nbt_capture_transfer transfer, void* contex
     if (bye_until)
         printf("AA_BYEBYE %s\n", session.isActive() ? "session still open: closing it" : "session ended cleanly");
     shutdown(c.socket, SHUT_RDWR);
+    nbt::mediaout::stop();   // before the session: its writer reports consumed audio to the session
+    nbt::mic::stop();        // before the session: the capture sends to it
+    unlink("/fs/ram3/nbt-aa-voice");   // a voice session the phone did not end
     session.stop();
     aa_mic::shutdown();
     aa_audio::shutdown(); // after the session thread ended: no more frames come in

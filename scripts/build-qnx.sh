@@ -5,6 +5,7 @@
 #   src/                 this repository's src/ folder
 #   reference/           NBT-AAD milestone-7 src/ and include/ with our overlay and patches applied
 #   mbedtls-3.6.7/       Mbed TLS release with the legacy-UTCTime patch and the QNX config
+#   ffmpeg/, ffmpeg-config/, ffmpeg-asm/, build-ffmpeg-qnx.sh   FFmpeg for nbt_decoder (scripts/ffmpeg_qnx.py)
 #   expected/            optional: binaries of an installer payload to compare against
 # Environment: HMI_LIBS = folder with libAppFramework.A.so and libCoreFramework.A.so copied from your own NBT
 #              (needed only for the HMI plugin; without it the plugin is skipped).
@@ -49,7 +50,8 @@ ntox86-ar rcs libnbt_aa_core.a core/aa_session.o core/aa_cryptor.o core/audio_ac
 echo "== oneplus_native (USB/AOA + TLS + Android Auto session)"
 cd $A
 $CC -Wall -Wextra -DNBT_AA_TLS_HANDSHAKE -DNBT_AA_CAPTURE -c oneplus_aoa.c -o $W/oneplus_aoa.o
-$CXX $AAINC aa_video_capture.cpp aa_audio.cpp tls_usb_probe.cpp $W/oneplus_aoa.o $W/core/aa_cryptor.o $W/libnbt_aa_core.a $TLSLIBS \
+# (the maintained build is scripts/build-open.sh: it also links aa_mic.cpp with the voice scenario and a2i_capture)
+$CXX $AAINC aa_video_capture.cpp aa_audio.cpp aa_media_out.cpp aa_mic_multich.cpp tls_usb_probe.cpp $W/oneplus_aoa.o $W/core/aa_cryptor.o $W/libnbt_aa_core.a $TLSLIBS \
   -lsocket -lm -lusbdi -o $OUT/oneplus_native
 
 echo "== native_service, decode_runner, fifo_http, accessory_window"
@@ -65,6 +67,24 @@ $CXX -Iref nbt_hwvideo.cpp ref/dsi_client.cpp ref/most/client.cpp -o $OUT/nbt_hw
 $CXX -Iref nbt_cluster.cpp ref/dsi_client.cpp ref/most/client.cpp -o $OUT/nbt_cluster -lm
 # audioconn replacement for the original NBT (ConnectionMaster FBlock 03 build/remove of connection 0xb8)
 $CXX -Iref nbt_audioconn.cpp ref/dsi_client.cpp ref/most/client.cpp -o $OUT/audioconn
+$CXX -Iref nbt_key.cpp ref/dsi_client.cpp ref/most/client.cpp -o $OUT/nbt_key
+
+echo "== nbt_a2i_beep (test: beeps into an io-amp input)"
+$CC -Wall $A/audio/nbt_a2i_beep.c -o $OUT/nbt_a2i_beep -lm
+echo "== nbt_decoder (decoder mode: FFmpeg 2.8.22 H.264 decoder + the car's video interface)"
+cd $W
+if test ! -f ffmpeg-config/KEY; then
+  echo "SKIPPED: no FFmpeg sources (build_all.py could not get them)"
+elif sh build-ffmpeg-qnx.sh > ffmpeg.log 2>&1; then
+  cat ffmpeg.log
+  if ! $CC -O2 -Wall -Wextra -Wc,-std=gnu99 -I$W/ffmpeg-lib/include -I$W/ffmpeg $A/decoder/nbt_decoder.c \
+      $W/ffmpeg-lib/libavcodec.a $W/ffmpeg-lib/libavutil.a -lm -o $OUT/nbt_decoder; then
+    echo "SKIPPED: nbt_decoder did not compile (see above)"
+  fi
+else
+  cat ffmpeg.log
+  echo "SKIPPED: FFmpeg build failed (see above)"
+fi
 
 echo "== HMI plugin libNbtAndroidAuto.so"
 cd $W/src/idrive
@@ -74,6 +94,10 @@ if test -f $HMI_LIBS/libAppFramework.A.so -a -f $HMI_LIBS/libCoreFramework.A.so;
 else
   echo "SKIPPED: no libAppFramework.A.so / libCoreFramework.A.so in $HMI_LIBS (copy them from your NBT)"
 fi
+
+echo "== nbt_reset (Restart system on the Android Auto page)"
+cd $W/src/idrive/reboot
+$CC -O2 -Wall -Wextra nbt_reset.c -lsocket -o $OUT/nbt_reset
 
 cd $W
 echo "== built"

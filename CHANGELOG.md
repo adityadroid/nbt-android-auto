@@ -14,6 +14,51 @@ original HU_NBT). Not part of a released installer payload yet.
   it again after silence and after every session. On by default; falls back to Bluetooth if the route is refused or
   `liba2i_client.so` is missing; `touch .../NbtAndroidAutoRT/bt-audio` forces Bluetooth.
   Details, findings and rollback: `docs/AA-AUDIO-PLAN.md`.
+## Unreleased (fork valinet/nbt-android-auto)
+
+- **Decoder mode (default):** the picture decoded with FFmpeg and shown through the car's own video path; no more lag
+  when the USB sound runs, up to 60 pictures/s. Used whenever `nbt_decoder` is installed (`decoder.off` = the old path); see
+  [docs/DECODER.md](docs/DECODER.md).
+- **Parking assistant:** while it is on, Android Auto stays out of the way; when it closes, Android Auto comes back
+  (NAV), also right after boot before the controller has been touched.
+- **Decoder:** each picture is shown as soon as it has arrived, not when the next one comes (the knob reacted late in
+  apps that send few pictures, such as YouTube Music).
+- **Car microphone:** Google Assistant and voice search hear the car's microphone (endpoint `/output_multich_0`,
+  converted to 16 kHz mono); `NBT_MIC=0` turns it off. A long press of the steering-wheel voice button starts the
+  Assistant while Android Auto is on screen; a short press stays with BMW's voice control. While the Assistant
+  listens and answers, another playing source (radio, Bluetooth) is muted and the answer plays in its place; BMW's voice control pauses Android Auto music and
+  plays it again afterwards.
+- **Calls:** a call made or answered in iDrive pauses Android Auto music; it plays again when the call ends
+  (`NBT_CALL_PAUSE=0` off). iDrive's call screen, which took the screen from Android Auto, is sent back.
+- **Session:** 15 s without data from the phone before a session counts as dead (was 5 s), so a short stall freezes
+  the picture instead of disconnecting; pauses are logged (`AA_USB_PAUSE`).
+- **Video flow control:** the phone sends video only as fast as the decoder takes it.
+- **USB sound:** three 4096-byte packages queued, writer threads at a higher priority.
+
+## 2026.11.17 (fork valinet/nbt-android-auto)
+
+Tested on a BMW F30 with NBT. Technical details: [docs/FORK-CHANGES.md](docs/FORK-CHANGES.md).
+
+- **Bluetooth / AUX audio fixed:** after Android Auto had run, other sources no longer stay silent until an HMI reboot
+  (the decoder switched off io-nme's audio for everyone).
+- **Audio source:** the phone starting playback switches the car to Android Auto's source; leaving it pauses the
+  phone, returning resumes it. (With the cable setup the source is AUX, and choosing AUX brings Android Auto to the
+  front.)
+- **Steering wheel:** roller = next / previous, push = play / pause, only on Android Auto's source; no song skip at boot; the roller stays
+  with iDrive's contact list for 4 s after the phone button.
+- **Controller:** BACK and tilt left / right stay in Android Auto, also with split screen on; NAV brings Android Auto to
+  the front; NAV pressed again in Android Auto switches to the phone's audio (AUX) or play / pauses it. These act only
+  while a session runs.
+- **Start at boot** button (on / off); the service starts right away instead of after 15 s.
+- **Parking assistant:** Android Auto comes back when it closes.
+- **Night mode:** Android Auto (Google Maps, Waze) goes dark when the headlights are on.
+- **Android Auto sound over USB:** music, prompts and system sounds play through the car as their own source (no
+  cable); NAV in Android Auto switches to it. The cable setup stays available (`media-jack`).
+- **Restart system** button and `scripts/nbt_reset.py` (reboot from a laptop).
+- One hold screen instead of 8; USB reads wait 8 s instead of 2 s; Bluetooth audio keeps working while Android Auto
+  runs.
+- Docs: [docs/WORKFLOW.md](docs/WORKFLOW.md) (commands), [docs/SSH-ACCESS-SERIAL.md](docs/SSH-ACCESS-SERIAL.md) (free
+  SSH unlock over the debug serial port).
 
 ## 2026.11.10.2
 

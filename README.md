@@ -9,6 +9,18 @@ iDrive controller, and Google Maps turn-by-turn guidance shows up in the instrum
 
 🎬 **Sneak peek:** [see it running in the car (Instagram video)](https://www.instagram.com/reel/DfkW1wYsB__/)
 
+> **This fork** ([valinet/nbt-android-auto](https://github.com/valinet/nbt-android-auto)) adds audio source handling,
+> steering wheel keys, BACK / tilt fixes, start at boot and more, tested on a BMW F30 with NBT. Full list:
+> [docs/FORK-CHANGES.md](docs/FORK-CHANGES.md). Build, install and debug commands: [docs/WORKFLOW.md](docs/WORKFLOW.md).
+>
+> **Audio:** Android Auto sound works over USB in this fork: music, navigation prompts and system sounds play through
+> the car as their own audio source (iDrive shows a globe with a music note). The 3.5 mm cable to AUX is optional; the
+> flag file `media-jack` brings back the cable setup ([docs/WORKFLOW.md](docs/WORKFLOW.md)). I use a dedicated phone
+> that always stays in the car, always connected to it.
+>
+> **Split screen:** I primarily develop and test this with iDrive's split screen on, showing the trip computer. Other
+> split screen contents, or split screen off, get less testing.
+
 🇩🇪 **Deutsch:** Kurzfassung [weiter unten](#deutsch), Installationsanleitung in [installer/README.md](installer/README.md).
 
 ## Features
@@ -16,14 +28,22 @@ iDrive controller, and Google Maps turn-by-turn guidance shows up in the instrum
 - **Android Auto over USB**: any Android phone, no phone-specific configuration.
 - **Hardware video**: 800x480 in full screen through the stock Cinemo/VideoApp path, about 23 fps at about 27 % CPU.
   Two picture modes: **wide** (full width) and **16:9** (sharper, iDrive split screen stays visible on the right).
-- **iDrive controller**: turn = rotate, tilt = D-pad, press = OK, BACK = back. MENU / MEDIA / NAV / COM / OPTION leave
-  Android Auto, which keeps running in the background.
-- **Menu entry** *Multimedia → Android Auto*: shows the status, starts the service 15 s after the HMI boots and brings a
-  running session to the front.
+- **iDrive controller**: turn = rotate, tilt = D-pad, press = OK, BACK = back; BACK and tilts stay in Android Auto, also
+  with iDrive split screen on. MENU / MEDIA / COM / OPTION leave Android Auto, which keeps running in the background.
+  **NAV** brings Android Auto to the front; pressed again in Android Auto, it switches to Android Auto's sound (or
+  play / pause).
+- **Android Auto sound in the car**: over USB, into main audio source `f6` (no cable). When the phone starts playing,
+  the car switches to it; choosing another source in iDrive pauses the phone; NAV in Android Auto switches back and
+  resumes. iDrive's AUX stays factory.
+- **Steering wheel**: roller up / down = next / previous track, roller push = play / pause, only while Android Auto's
+  audio source plays. After the phone button the roller stays with iDrive's contact list for 4 s.
+- **Menu entry** *Multimedia → Android Auto*: shows the status, starts the service as soon as the HMI boots and brings a
+  running session to the front. **Start at boot** (on / off) brings Android Auto to the front once per boot.
+- **Parking assistant**: when it closes, Android Auto comes back if it was on screen before.
 - **Navigation in the instrument cluster** (6WB cluster) while Google Maps guides a route: arrow, distance bar, street
   name, motorway/road shields and lanes (lanes not yet confirmed with a real phone). BMW navigation takes priority when it guides itself.
 - **Restart Android Auto** button on the Android Auto page restarts only the service (not the NBT) and saves a
-  diagnostic snapshot first.
+  diagnostic snapshot first. **Restart system** reboots the head unit (also from a laptop: `scripts/nbt_reset.py`).
 
 ## Known limitations
 
@@ -31,11 +51,12 @@ iDrive controller, and Google Maps turn-by-turn guidance shows up in the instrum
   default and falls back to Bluetooth by itself if the car refuses the audio route. `touch NbtAndroidAutoRT/bt-audio`
   forces Bluetooth. Calls and the microphone still use Bluetooth. Verified on one car (F07 2014); see
   [docs/AA-AUDIO-PLAN.md](docs/AA-AUDIO-PLAN.md).
+- **Navigation prompts while another source plays** (radio, Bluetooth) are not audible yet; on Android Auto's own
+  source they are. Calls still go over Bluetooth. Details: [docs/AA-AUDIO-PLAN.md](docs/AA-AUDIO-PLAN.md).
 - **800x480 only.** The hardware capture (`dev-nvideocapture`) is limited to WVGA. 720p was tested: not sharper, more
   input lag.
 - The controller has a noticeable delay because of the video buffer.
 - No map picture in the instrument cluster: the 6WB cluster shows pictures only in its top line (turn arrow, shields).
-- In wide mode, switch iDrive split screen off (OPTION → split screen off), otherwise tilting right twice opens it.
 - Tested with one car and one phone only.
 
 What changed between versions: [CHANGELOG.md](CHANGELOG.md).
@@ -55,7 +76,10 @@ The stock NBT does not accept SSH logins, so SSH has to be unlocked (patched) on
 - **How it was done on the developer's car:** with **FeatureInstaller**. It can take **several attempts**. The last
   step sometimes reports **errors even though SSH access was enabled**, so try to connect (for example
   `ssh root@169.254.199.99`) before you assume it failed.
-- **Root password:** it can be looked up in this forum thread:
+- **Free alternative:** enable SSH yourself through the debug serial port on the head unit's Jacinto board, with a USB
+  serial adapter: [docs/SSH-ACCESS-SERIAL.md](docs/SSH-ACCESS-SERIAL.md). No FeatureInstaller, and nobody else
+  connects to your car remotely to install things.
+- **Root password:** the default is `ts&SK412`. It can also be looked up in this forum thread:
   [SSH access guide (supramkv.com)](https://www.supramkv.com/threads/ssh-access-guide-supra-nbtevo-headunit.24190/).
   The thread is about the NBT Evo in the Toyota Supra; the root password is given there.
 
@@ -99,7 +123,8 @@ NbtAndroidAuto (HMI plugin) ── menu entry, status page, autostart via boot.s
 ```
 
 More: [docs/HW-VIDEO-PATH.md](docs/HW-VIDEO-PATH.md), [docs/CLUSTER-HUDTERMINAL.md](docs/CLUSTER-HUDTERMINAL.md),
-[docs/ANDROID-AUTO.md](docs/ANDROID-AUTO.md). Older experiments (PNG pipeline, WAL sprites, first hello-world plugin)
+[docs/ANDROID-AUTO.md](docs/ANDROID-AUTO.md), [docs/FORK-CHANGES.md](docs/FORK-CHANGES.md),
+[docs/WORKFLOW.md](docs/WORKFLOW.md). Older experiments (PNG pipeline, WAL sprites, first hello-world plugin)
 are kept in [docs/history/](docs/history/) for reference.
 
 ## Repository layout
@@ -136,8 +161,9 @@ Parts of the Android Auto core and the controller code come from **NBT-AAD** by 
 ([Sq00ky/Supra-iDrive6-Android-Auto](https://github.com/Sq00ky/Supra-iDrive6-Android-Auto)). Thank you!
 
 This project is licensed under the [PolyForm Noncommercial License 1.0.0](LICENSE): free for private and other
-noncommercial use, **no commercial use** (for example selling it pre-installed). Third-party notices are listed in
-[NOTICE.md](NOTICE.md).
+noncommercial use, **no commercial use** (for example selling it pre-installed). The decoder `nbt_decoder`,
+`nbt_reset` and a few documents are licensed under the [GNU GPL version 3](LICENSE-GPL-3.0.txt) instead; the list is
+in [NOTICE.md](NOTICE.md#gplv3-parts), together with the third-party notices.
 
 Required Notice: Copyright (c) 2026 nanaisu - NBT-AAD (https://github.com/Sq00ky/Supra-iDrive6-Android-Auto)
 
@@ -170,6 +196,10 @@ So sieht es im Auto aus: [Video auf Instagram](https://www.instagram.com/reel/Df
 - **Einschränkungen:** Ton über Android Auto läuft über USB (Rückfall auf Bluetooth, Anrufe und Mikrofon weiter per
   Bluetooth), 800x480, getestet mit einem Auto (F07, 2014) und einem Telefon.
 - **Nutzung auf eigene Gefahr**, keine Gewähr. Lizenz: PolyForm Noncommercial 1.0.0, also keine kommerzielle Nutzung.
+- **Einschränkungen:** noch kein Ton über Android Auto (Musik weiter per Bluetooth), 800x480, getestet mit einem Auto
+  (F07, 2014) und einem Telefon.
+- **Nutzung auf eigene Gefahr**, keine Gewähr. Lizenz: PolyForm Noncommercial 1.0.0, also keine kommerzielle Nutzung;
+  der Decoder und die übrigen in NOTICE.md unter „GPLv3 parts“ genannten Dateien: GNU GPL Version 3.
 - Mitmachen ist ausdrücklich erwünscht: [CONTRIBUTING.md](CONTRIBUTING.md). Issues und Pull Requests gern auf Deutsch
   oder Englisch.
 - **Spenden und Kontakt:** Wer das Projekt unterstützen möchte, kann gern per **PayPal** an

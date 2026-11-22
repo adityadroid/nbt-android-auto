@@ -22,6 +22,12 @@
  *   gate.mode   only touch the phone after the HMI page was opened
  *   bt-audio    Bluetooth sound instead of the default Android Auto sound (see set_audio_mode)
  *   aa-audio    optional: another ConnectionMaster connection for the Android Auto sound (experiment)
+ *   audio-browser  our earlier sound route (NBT-AAD BrowserAudio, connection b8 for everything) instead of valinet's
+ *               f6 main source + b8 prompts (the default since the valinet merge, 2026-11-22)
+ *   media-jack  valinet's cable setup: the phone plays on its 3.5 mm jack into AUX, no media channel
+ *   decoder.mode  with nbt_decoder present (boot.sh: always, unless decoder.off in the package): it decodes and shows
+ *               the picture instead of fifo_http + decode_runner + nbt_hwvideo; decoder.60fps = ask the phone for 60 fps
+ *               (boot.sh: unless decoder.30fps)
  *   peer.pin    pin the phone's TLS certificate instead of checking the chain
  *   shadow.path, wal.args   old experimental modes (see experiments/), not used by the installed package
  *
@@ -48,6 +54,7 @@
 #define HMI_REQUEST_FILE "/fs/ram3/nbt-aa-request"
 #define CINEMO_LIBRARY_PATH "/opt/mm/lib/cinemo:/opt/mm/lib:/lib:/usr/lib"
 #define SYSTEM_LIBRARY_PATH "/opt/sys/lib:/lib:/usr/lib"
+#define DECODER_LIBRARY_PATH "/proc/boot:/lib:/usr/lib:/opt/sys/lib"
 
 static volatile sig_atomic_t stopping;
 
@@ -256,6 +263,71 @@ static void set_audio_mode(void)
         audio_conn = conn;
     } else
         unsetenv("NBT_AUDIOCONN");
+}
+
+/* Which sound route a session uses (valinet merge, 2026-11-22). Runtime-folder flag files:
+ *   bt-audio       Bluetooth: the phone's sound stays on Bluetooth (no media channel)
+ *   audio-browser  our earlier route: NBT-AAD BrowserAudio -> A2I input_stereo_3 over connection b8 (set_audio_mode);
+ *                  proven on this car (F10, 2026-11-20). nbt_knob's audio source handling is switched off for it.
+ *   media-jack     valinet's cable setup: the phone plays on its 3.5 mm jack into AUX
+ *   (none)         valinet's route (car-tested on an F30 NBT 2026-11-18, aa_media_out.hpp): media into io-amp input
+ *                  input_stereo_1 = main source f6, kept by iDrive, steering wheel to us; prompts while another source
+ *                  plays go into input_stereo_3 over connection b8 (nbt_knob builds it). */
+static void set_audio(void)
+{
+    if (!access("bt-audio", F_OK) || !access("audio-browser", F_OK)) {
+        unsetenv("NBT_AA_MEDIA_OUT");
+        unsetenv("NBT_AA_PROMPT_OUT");
+        setenv("NBT_PROMPT_CONN", "0", 1);
+        /* nbt_knob: no audio source of ours to switch to, pause on or route the wheel by */
+        setenv("NBT_PLAY_AUX", "0", 1);
+        setenv("NBT_AUX_PAUSE", "0", 1);
+        setenv("NBT_AUX_RESUME", "0", 1);
+        setenv("NBT_NAV_AUDIO", "0", 1);
+        setenv("NBT_WHEEL_AUX_ONLY", "0", 1);
+        setenv("NBT_AUX_OPENS_AA", "0", 1);
+        set_audio_mode(); /* bt-audio -> Bluetooth, else our browser route (or Bluetooth if it cannot run) */
+        return;
+    }
+    setenv("NBT_AUDIO_MODE", "mediaout", 1); /* not "browser": aa_audio (our route) stays off */
+    unsetenv("NBT_AUDIOCONN");
+    audio_conn = 0;
+    /* Android Auto sound in the car (valinet 2026-11-18, aa_media_out.hpp): the media channel (9) is offered to the phone,
+     * its sound goes into io-amp input input_stereo_1, which plays as main source f6. nbt_knob treats f6 as the Android
+     * Auto audio source (play / NAV in Android Auto switch to it, leaving it pauses the phone) and leaves iDrive's AUX
+     * alone. The file media-jack brings back the cable setup: no media channel (the phone plays on its own jack), the
+     * Android Auto source is AUX (bb) and choosing AUX opens Android Auto. */
+    if (access("media-jack", F_OK) != 0) {
+        setenv("NBT_SDR_DROP", "2,4", 1); /* services not offered to the phone (see NBT-AAD sdr_builder) */
+        setenv("NBT_AA_MEDIA_OUT", "input_stereo_1", 1);
+        /* keep channel 8 a GUIDANCE sink (car 2026-11-18: the NBT-AAD SDR builder retypes it to SYSTEM_AUDIO in its
+         * Bluetooth audio mode; without Bluetooth audio the phone then spoke the prompts on its own speaker) */
+        setenv("NBT_GUIDANCE_BT", "0", 1);
+        /* prompts while another source plays: input_stereo_3 over connection b8 (nbt_knob builds it); file prompts-off
+         * = only on Android Auto's own source */
+        if (access("prompts-off", F_OK) != 0) {
+            setenv("NBT_AA_PROMPT_OUT", "input_stereo_3", 1);
+            unsetenv("NBT_PROMPT_CONN");
+        } else {
+            unsetenv("NBT_AA_PROMPT_OUT");
+            setenv("NBT_PROMPT_CONN", "0", 1);
+        }
+        setenv("NBT_AUX_SOURCE", "f6", 1);
+        setenv("NBT_AUX_OPENS_AA", "0", 1);
+    } else {
+        setenv("NBT_SDR_DROP", "2,4,9", 1);
+        unsetenv("NBT_AA_MEDIA_OUT");
+        unsetenv("NBT_AA_PROMPT_OUT");
+        setenv("NBT_AUX_SOURCE", "bb", 1);
+        unsetenv("NBT_AUX_OPENS_AA");
+    }
+    unsetenv("NBT_PLAY_AUX");
+    unsetenv("NBT_AUX_PAUSE");
+    unsetenv("NBT_AUX_RESUME");
+    unsetenv("NBT_NAV_AUDIO");
+    unsetenv("NBT_WHEEL_AUX_ONLY");
+    printf("audio: Android Auto, %s\n", getenv("NBT_AA_MEDIA_OUT") ? "main source f6 (input_stereo_1)"
+                                                                    : "phone jack into AUX (media-jack)");
 }
 
 /* After a session: connection 0xb8 is an interrupting source (radio / Bluetooth paused while it is built). If
@@ -727,13 +799,14 @@ int main(int argc, char** argv)
     Child capture = {0, 0, 0}; /* oneplus_native --capture-video: the Android Auto session */
     Child knob = {0, 0, 0};    /* nbt_knob: iDrive controller -> input.fifo */
     Child hwv = {0, 0, 0};     /* nbt_hwvideo: shows the video window in front of iDrive */
+    Child ndec = {0, 0, 0};    /* decoder mode: nbt_decoder, started once and kept across sessions */
     (void)argv;
     int guard = -1, lock = -1, bus, device, type, attempts = 0, resets = 0;
     int recovered = 0; /* pid of a native_service whose stale lock we took over */
     long long absent_since = 0;
-    int live = 0, wal = 0, gate = 0, hw = 0, res720 = 0, center = 0, ana = 0, right = 0; /* mode switches */
+    int live = 0, wal = 0, gate = 0, hw = 0, res720 = 0, center = 0, ana = 0, right = 0, dmode = 0; /* mode switches */
     unsigned session = 0;
-    char bus_text[16], device_text[16], shadow[200], walargs[160], *wargv[16];
+    char bus_text[16], device_text[16], shadow[200], walargs[160], *wargv[16], ndecargs[160], *ndargv[24];
 
     if (argc != 1 || geteuid() != 0 || chdir(RUNTIME_DIR))
         return 2;
@@ -845,9 +918,13 @@ int main(int argc, char** argv)
     setenv("NBT_AA_PAD", "8192", 0);
     setenv("NBT_CAR_YEAR", "2014", 1);
     setenv("NBT_HU_MODEL", "HU_NBT", 1);
-    set_audio_mode();
+    set_audio();
     set_mic_and_bluetooth();
-    setenv("NBT_RX_TIMEOUT_S", "5", 1);
+    /* 15 s of silence before the session counts as dead (valinet, was 5; car 2026-11-17 and 2026-11-19: sessions ended
+     * after 5 s without anything from the phone, while it had not crashed and its USB link stayed up). The phone pings
+     * once a second, so silence is never normal; a short stall now freezes the picture instead of ending the session. A
+     * real unplug still ends it at once (the USB transfer fails). */
+    setenv("NBT_RX_TIMEOUT_S", "15", 1);
     /* now playing (song / artist / state) for nbt_cluster's track line in the cluster / HUD */
     setenv("NBT_NOWPLAYING_FILE", RUNTIME_DIR "/nowplaying", 1);
     unlink("nowplaying");
@@ -929,6 +1006,55 @@ int main(int argc, char** argv)
         setenv("NBT_VID_INSETS", "0,0,0,0", 1);
         setenv("NBT_VID_PAR", "16000", 0);
     }
+    /* decoder mode (optional, 2026-11-18): the picture is decoded and shown by nbt_decoder (src/android_auto/decoder:
+     * FFmpeg H.264 on the CPU, shown through the car's INvVideo in iDrive's EARLYVIDEO window). Replaces fifo_http +
+     * Cinemo (decode_runner) + nbt_hwvideo for each session; the window hides itself while /fs/ram3/nbt-aa-hidden
+     * exists. Whole 800x480 canvas: full width (anamorph, stretched to 1280x480) or, with split800, 1:1 in an 800x480
+     * window (--size 800x480) so iDrive's split screen stays visible on the right. center800 is not offered here.
+     * decoder.60fps: ask the phone for 60 fps (NBT_VID_FPS) and configure the car's stream for 60 (--fps 60). decoder.args: extra
+     * arguments for nbt_decoder (one line, after ours). */
+    dmode = hw && access("decoder.mode", F_OK) == 0 && access("nbt_decoder", X_OK) == 0;
+    if (dmode) {
+        int n = 0;
+        const int gsplit = right;
+        const int want60 = access("decoder.60fps", F_OK) == 0;
+        center = right = res720 = 0;
+        ana = !gsplit;
+        setenv("NBT_VID_RES", "1", 1);
+        setenv("NBT_VID_INSETS", "0,0,0,0", 1);
+        if (gsplit)
+            unsetenv("NBT_VID_PAR");
+        else
+            setenv("NBT_VID_PAR", "16000", 0);
+        if (want60)
+            setenv("NBT_VID_FPS", "60", 1);
+        ndargv[n++] = "./nbt_decoder";
+        ndargv[n++] = "--input";
+        ndargv[n++] = "annexb.fifo";
+        ndargv[n++] = "--ready";
+        ndargv[n++] = "http.ready";
+        if (gsplit) {
+            ndargv[n++] = "--size";
+            ndargv[n++] = "800x480";
+        }
+        if (want60) {
+            ndargv[n++] = "--fps";
+            ndargv[n++] = "60";
+        }
+        ndargv[n] = 0;
+        {
+            FILE* f = fopen("decoder.args", "r");
+            if (f) {
+                if (fgets(ndecargs, sizeof(ndecargs), f)) {
+                    size_t k = strlen(ndecargs);
+                    while (k && (ndecargs[k - 1] == '\n' || ndecargs[k - 1] == '\r'))
+                        ndecargs[--k] = 0;
+                    split(ndecargs, ndargv + n, 24 - n);
+                }
+                fclose(f);
+            }
+        }
+    }
 
     /* ---- processes that run for the whole service life ---- */
     if (live) {
@@ -957,9 +1083,40 @@ int main(int argc, char** argv)
      * with the Cinemo library path), so it gets its own library path for the fork. */
     if (!access("nbt_knob", X_OK) && (!mkfifo("input.fifo", 0600) || errno == EEXIST)) {
         char* args[] = {"./nbt_knob", 0};
+        /* steering-wheel voice button: a long press starts the Google Assistant while Android Auto is on screen (the
+         * car's microphone goes to the phone, aa_mic); a short press stays with BMW's voice control.
+         * NBT_PTT_ASSISTANT=0 leaves the long press to iDrive too. */
+        setenv("NBT_PTT_ASSISTANT", "1", 0);
         setenv("LD_LIBRARY_PATH", SYSTEM_LIBRARY_PATH, 1);
         knob = spawn(args, 0, "knob.log");
         setenv("LD_LIBRARY_PATH", CINEMO_LIBRARY_PATH, 1);
+    }
+
+    /* decoder mode at boot (car 2026-11-18): with the phone already plugged in, nbt_decoder started ~19 s after boot
+     * (our plugin starts the service as soon as iDrive loads it) showed its first pictures from 23 s on, and from
+     * ~26 s every upload waited 3 s (VideoFrame 0x800f0053) for good. At 26 s iDrive logs "MARKER HMIReady" and its
+     * navigation guidance viewer attaches its views; started after that (phone plugged in later) it works. So right
+     * after boot the phone is not touched until "MARKER HMIReady" is in the system log, plus decoder.delay seconds
+     * (default 2). Later starts (mode change, service restart) do not wait: after 90 s of uptime the check is
+     * skipped, and the wait ends at 60 s of uptime at the latest. */
+    if (dmode && ms() < 90000) {
+        long grace = 2;
+        FILE* f = fopen("decoder.delay", "r");
+        if (f) {
+            long v;
+            if (fscanf(f, "%ld", &v) == 1 && v >= 0 && v <= 60)
+                grace = v;
+            fclose(f);
+        }
+        while (!stopping && ms() < 60000 && system("sloginfo 2>/dev/null | grep -q 'MARKER HMIReady'") != 0) {
+            report("waiting_for_hmi", session);
+            usleep(500000);
+        }
+        {
+            long long until = ms() + grace * 1000;
+            while (!stopping && ms() < until)
+                usleep(100000);
+        }
     }
 
     /* ---- one Android Auto session per loop pass ---- */
@@ -1054,7 +1211,25 @@ int main(int argc, char** argv)
             setenv("NBT_AOA_PRODUCT", "2d01", 1);
         else
             unsetenv("NBT_AOA_PRODUCT");
-        if (!live) {
+        if (dmode) {
+            /* nbt_decoder reads the FIFO itself and creates http.ready when it waits for a writer. It is started once
+             * and kept for the following sessions (a closed FIFO only ends that session's stream): car
+             * 2026-11-18/19, starting and killing it for every session froze the whole iDrive display when the phone
+             * was plugged in again (once "NO SIGNAL" and an iDrive restart). Started again only if it ended. */
+            if (!alive(&ndec)) {
+                char ndecname[40];
+                unlink("http.ready");
+                snprintf(ndecname, sizeof(ndecname), "nbt_decoder-%u.log", session);
+                setenv("LD_LIBRARY_PATH", DECODER_LIBRARY_PATH, 1);
+                ndec = spawn(ndargv, 0, ndecname);
+                setenv("LD_LIBRARY_PATH", CINEMO_LIBRARY_PATH, 1);
+            }
+            {
+                long long limit = ms() + 10000;
+                while (!stopping && access("http.ready", F_OK) && alive(&ndec) && ms() < limit)
+                    usleep(100000);
+            }
+        } else if (!live) {
             unlink("http.ready");
             {
                 char* args[] = {"./fifo_http", "annexb.fifo", "http.ready", 0};
@@ -1090,9 +1265,10 @@ int main(int argc, char** argv)
         }
 
         /* step 4: the Android Auto session itself (old live mode: nbt_live_file, kept in 'http', runs all the time) */
-        if (!stopping && (live ? alive(&http) : (!access("http.ready", F_OK) && alive(&decoder) && alive(&http)))) {
+        if (!stopping && (dmode ? (!access("http.ready", F_OK) && alive(&ndec))
+                              : live ? alive(&http) : (!access("http.ready", F_OK) && alive(&decoder) && alive(&http)))) {
             char* args[] = {"./oneplus_native", "--capture-video", bus_text, device_text, 0};
-            set_audio_mode(); /* again per session: a failed audio route falls back to Bluetooth */
+            set_audio(); /* again per session: a failed audio route falls back to Bluetooth */
             snprintf(bus_text, sizeof(bus_text), "%d", bus);
             snprintf(device_text, sizeof(device_text), "%d", device);
             {
@@ -1100,6 +1276,7 @@ int main(int argc, char** argv)
                 snprintf(capname, sizeof(capname), "capture-%u.log", session);
                 /* /opt/sys/lib last: liba2i_client.so (A2I audio output) and what it links */
                 setenv("LD_LIBRARY_PATH", CINEMO_LIBRARY_PATH ":/opt/sys/lib", 1);
+                unlink("/fs/ram3/nbt-aa-media"); /* the phone's media state, written anew by this session */
                 capture = spawn(args, 0, capname);
                 setenv("LD_LIBRARY_PATH", CINEMO_LIBRARY_PATH, 1);
             }
@@ -1109,8 +1286,8 @@ int main(int argc, char** argv)
                 long long began = ms(), last_hwv = ms(), last_persist = ms();
                 unsigned hwv_restarts = 0;
                 const char* why;
-                while (!stopping && alive(&capture) && alive(&http) &&
-                       (live || (alive(&decoder) && (hw || alive(&frames))))) {
+                while (!stopping && alive(&capture) && (dmode ? alive(&ndec) : alive(&http)) &&
+                       (live || dmode || (alive(&decoder) && (hw || alive(&frames))))) {
                     usleep(200000);
                     keep_reported(session);
                     /* "connected, but no picture": nbt_hwvideo gives up (exit 5) when VideoApp never acknowledged the
@@ -1139,6 +1316,7 @@ int main(int argc, char** argv)
                 }
                 why = stopping ? "service stopping"
                       : !alive(&capture) ? "Android Auto session ended (phone / USB / protocol)"
+                      : dmode ? "nbt_decoder ended"
                       : !alive(&http) ? "fifo_http ended"
                       : "decoder ended";
                 {
@@ -1180,10 +1358,11 @@ int main(int argc, char** argv)
         }
         end(&frames);
         drain(guard);
-        if (!live)
+        if (!live && !dmode)
             unlink("http.ready");
-        /* Clear only the FIFO bytes left by this completed session (live mode: nbt_live_file owns the FIFO reader). */
-        if (!live) {
+        /* Clear only the FIFO bytes left by this completed session (live mode: nbt_live_file owns the FIFO reader;
+         * decoder mode: nbt_decoder keeps reading it). */
+        if (!live && !dmode) {
             int fd = open("annexb.fifo", O_RDONLY | O_NONBLOCK);
             if (fd >= 0) {
                 drain(fd);
@@ -1195,6 +1374,7 @@ int main(int argc, char** argv)
     }
 
 done:
+    end(&ndec);
     end(&hwv);
     if (center)
         hmi_visible();

@@ -1,5 +1,5 @@
 diff --git a/milestone-7/src/aa_session.cpp b/milestone-7/src/aa_session.cpp
-index a2e1b34..7bafe0d 100644
+index 2d5a226..bcc29fb 100644
 --- a/milestone-7/src/aa_session.cpp
 +++ b/milestone-7/src/aa_session.cpp
 @@ -10,6 +10,25 @@
@@ -28,10 +28,10 @@ index a2e1b34..7bafe0d 100644
  #include "dhu_sdp.h"
  #include <stdio.h>
  #include <stdlib.h>
-@@ -1160,6 +1179,14 @@ void AASession::sessionLoop() {
-                     if (st != last_state) {
-                         last_state = st;
-                         printf("[AASession] media status ch12: state %u\n", st);
+@@ -1245,6 +1264,14 @@ void AASession::sessionLoop() {
+                         // NBT-Project (2026-11-13): for nbt_knob (pause on source change only while playing).
+                         // Car 2026-11-13: 2 = playing, 3 = paused.
+                         if (FILE* mf = fopen("/fs/ram3/nbt-aa-media", "w")) { fprintf(mf, "%u\n", st); fclose(mf); }
 +                        writeNowPlaying(0, st);
 +                    }
 +                } else if (msg_id == 0x8003 && frame_data.size() > 2) {
@@ -44,10 +44,10 @@ index a2e1b34..7bafe0d 100644
                  }
              } else if (msg_id == 0x8000) { // AV SETUP_REQUEST (Phone requests AV configuration on Video/Audio channel)
 diff --git a/milestone-7/src/sdr_builder.cpp b/milestone-7/src/sdr_builder.cpp
-index 6a6e2a0..adb8610 100644
+index 2fac3e9..73a8bb7 100644
 --- a/milestone-7/src/sdr_builder.cpp
 +++ b/milestone-7/src/sdr_builder.cpp
-@@ -689,12 +689,20 @@ bool patchTouchscreen(const uint8_t* p, size_t n, int h, std::vector<uint8_t>& o
+@@ -696,12 +696,20 @@ bool patchTouchscreen(const uint8_t* p, size_t n, int h, std::vector<uint8_t>& o
  }
  bool patchInputSource(const uint8_t* p, size_t n, int h, std::vector<uint8_t>& out) {
      size_t pos = 0;
@@ -69,7 +69,7 @@ index 6a6e2a0..adb8610 100644
          else if (wt == 2) {
              uint64_t l; if (!getVarint(p, n, pos, l) || pos + l > n) return false;
              const uint8_t* body = p + pos; pos += (size_t)l;
-@@ -708,6 +716,8 @@ bool patchInputSource(const uint8_t* p, size_t n, int h, std::vector<uint8_t>& o
+@@ -715,6 +723,8 @@ bool patchInputSource(const uint8_t* p, size_t n, int h, std::vector<uint8_t>& o
          else if (wt == 1) { pos += 8; out.insert(out.end(), p + start, p + pos); }
          else return false;
      }
