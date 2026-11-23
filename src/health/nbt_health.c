@@ -304,6 +304,7 @@ static void find_gateway(char *out, size_t cap) {
 /* ------------------------------------------------------------------ readings */
 typedef struct {
     int link, engine_answer, running;
+    int rpa_ok; unsigned char rpa[8];   /* DSC 22 4005: flat tyre monitor status (dsc_01 STATUS_REIFENPANNENANZEIGE) */
     long odo_km;
     int faults_read, active, stored;
     struct { char mod[8]; unsigned code; unsigned char st; } fault[MAX_FAULTS];
@@ -364,6 +365,17 @@ static void read_items(int fd, Health *h) {
     int n = uds(fd, KOMBI, req, 3, r, sizeof r, 2.0);
     h->odo_km = (n >= 7 && r[0] == 0x62) ? ((long)r[3] << 24) | (r[4] << 16) | (r[5] << 8) | r[6] : -1;
 }
+
+/* flat tyre monitor (RPA) in the DSC: b0 bits 01 warning, 04 running, 08 calibrating; b2 % of the warning limit;
+   b7 which wheel (1 front left, 2 front right, 3 rear left, 4 rear right). Car 2026-11-23: answers in the default session. */
+static void read_rpa(int fd, Health *h) {
+    unsigned char req[3] = {0x22, 0x40, 0x05}, r[64];
+    int n = uds(fd, 0x29, req, 3, r, sizeof r, 2.0);
+    h->rpa_ok = n >= 11 && r[0] == 0x62;
+    if (h->rpa_ok) memcpy(h->rpa, r + 3, 8);
+}
+
+static const char *WHEEL[] = {"", "front left", "front right", "rear left", "rear right"};
 
 static void read_faults(int fd, Health *h) {
     static unsigned char r[4096];
@@ -485,6 +497,26 @@ static void make_rows(const Health *h, char rows[ROWS][ROW_LEN], char d[ROWS][DL
         wrap(d[r], &k, it->note);
         r++;
     }
+    if (h->rpa_ok && r < ROWS) {
+        const unsigned char *t = h->rpa;
+        int k = 0, pos = t[7] >= 1 && t[7] <= 4 ? t[7] : 0;
+        if (t[0] & 0x01) {
+            act++;
+            size_t l = strlen(names);
+            snprintf(names + l, sizeof names - l, "%sTyre %s", l ? ", " : "", pos ? WHEEL[pos] : "low");
+            snprintf(rows[r], ROW_LEN, "Tyres: LOW %s  ACT", pos ? WHEEL[pos] : "(wheel unknown)");
+        } else if (t[0] & 0x08) snprintf(rows[r], ROW_LEN, "Tyres: monitor learning, no warning");
+        else snprintf(rows[r], ROW_LEN, "Tyres: no pressure loss  OK");
+        snprintf(d[r][k++], ROW_LEN, "Flat tyre monitor (wheel-speed based)");
+        snprintf(d[r][k++], ROW_LEN, "Warning: %s", t[0] & 0x01 ? "ON" : "off");
+        snprintf(d[r][k++], ROW_LEN, "Low tyre: %s", pos ? WHEEL[pos] : "none flagged");
+        snprintf(d[r][k++], ROW_LEN, "Closeness to warning limit: %d%%", t[2]);
+        snprintf(d[r][k++], ROW_LEN, "Learning after reset: %s", t[0] & 0x08 ? "yes (drive ~20 min)" : "done");
+        snprintf(d[r][k++], ROW_LEN, "No pressures: the car has no wheel sensors.");
+        snprintf(d[r][k++], ROW_LEN, "Reset after inflating: Vehicle Info >");
+        snprintf(d[r][k++], ROW_LEN, "Flat Tyre Monitor > Reset, then drive.");
+        r++;
+    }
     if (!h->engine_answer && r < ROWS) {
         snprintf(rows[r], ROW_LEN, "Engine: no answer (ignition on?)");
         snprintf(d[r][0], ROW_LEN, "The engine module did not answer.");
@@ -582,6 +614,7 @@ static void poll_once(const char *gw, Health *h, int faults_due) {
     h->link = fd >= 0;
     if (fd >= 0) {
         read_items(fd, h);
+        read_rpa(fd, h);
         if (faults_due) read_faults(fd, h);
         close(fd);
     }
