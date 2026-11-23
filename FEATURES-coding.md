@@ -1,158 +1,277 @@
 # F10 530d coding features — checked against this car
 
-Car: 2014 F10 LCI 530d (N57), India spec, original NBT, 6WB cluster, HUD, H/K, rear entertainment, RPA flat-tyre
-monitor. No alarm, no comfort access, no seat module, no KAFAS camera (only the FLA high-beam camera).
+**Car:** 2014 BMW F10 530d M Sport (LCI), N57 diesel, 8-speed sport automatic, India spec, original NBT head unit.
 
-Source of "now" values: the full read `nbt-coding/backups/probe-full-all-20261122-182551.json`, overlaid with the
-newest per-module backup (CAS, FRM, FZD, KOMBI, HU_NBT, IHKA: the after-write reads of 2026-11-22/23). Names and
-values come from each module's own CAFD plus `nbtcoding/names/`. Feature list from BimmerCode's F10 page, bimmerpost
-cheat sheets and our own CAFD search. Nothing was written to the car for this list.
+**What the factory fitted (from the vehicle order, SA codes):**
 
-> Correction 2026-11-23: SPORT+ and sport displays are already on in the car (the first version got both wrong). Head-unit (HU_NBT) value labels can be wrong in places, so check each head-unit item in the car before trusting its "now" value.
+| SA | In plain words | What it means for coding |
+|---|---|---|
+| 337 | M Sport package | M wheel, M aero, sport seats. With 2TB it gives the SPORT+ mode. |
+| 2TB | Sport automatic with paddles | Paddles, S/M gear display, launch control in the gearbox. |
+| 1CC | Auto start/stop | Start/stop memory and default can be coded. |
+| 609 | Navigation Professional (NBT) | Head unit, sport displays, iDrive menus. |
+| 6WB | Colour cluster (multi-function display) | Digital speed, logo, fuel warnings, M/sport displays in the cluster. |
+| 610 | Head-up display | HUD content is set in the cluster (KOMBI) and head unit. |
+| 3AG + 508 | Rear camera + front/rear PDC | Camera and parking menus. **No** top view or side cameras. |
+| 552, 5A1, 5AC, 8TN | Adaptive LED lights, LED fogs, high-beam assist, selectable DRL | Welcome lights, DRL, fog and HBA options. |
+| 534 | Auto climate (2.5-zone, "high") | Memory, AUTO behaviour, parked ventilation. |
+| 688, 6FH, 696 | Harman/Kardon, rear-seat screens, DVD changer | Audio and rear entertainment options. |
+| 459, 430, 431 | Electric seats with memory, mirror pack, auto-dim mirrors | Mirror fold and dip. No separate seat module for easy entry. |
+
+**Not fitted:** alarm (302), comfort access (322), tyre pressure sensors (RDC, only the RPA flat-tyre monitor), KAFAS camera
+(lane / speed-limit / collision warning), active cruise (ACC), heated wheel, heated seats, top/side view, remote start.
+
+**Why the first version was wrong:** it judged single switches without the vehicle order. SPORT+ and sport displays are
+switched on by **vehicle-order (FA) coding**: with 2TB/337 in the order, ICM gets `C_Anpassung_FES_Modus = FES_verbaut`
+(driving-experience switch with SPORT+), and the head unit gets `EFF_DYN_SPORT_UNIT = aktiv` (sport displays). `HU_NBT
+SPA_CHECKBOX` is a different setting. Many items below are the same: decide by **option first, switch second**.
+
+**Sources.** "Now" values: full read `nbt-coding/backups/probe-full-all-20261122-182551.json`, with the newer per-module
+reads of 2026-11-23 for CAS, FZD, KOMBI, HU_NBT and IHKA (FRM's per-module backups are older than the full read, so the
+full read wins). Names and value labels: each module's own CAFD plus `nbtcoding/names/`. Car tests by Adi on 2026-11-23
+beat any coding read. Feature list: BimmerCode F10 page, bimmerpost/5post F10 cheat sheets, motor-talk, F-series E-Sys
+sheets. Nothing was written to the car for this list.
+
+**Head unit (HU_NBT) warning.** Some HU_NBT value labels are shifted (for example `ECO_MODE` and `EFF_DYN_SPORT_CID`
+show language names). Treat every HU "now" value as **unconfirmed** unless Adi checked it in the car. HU_NBT also carries
+the Android Auto mod; our tool does not write it. Put all HU items into **one** careful write, with a full backup first.
+
+**CAS writes** switch the ignition off at the end: do them engine off. **ACSM, DSC, EGS, DME, ICM**: only with a reason.
+
+---
 
 ## Summary
 
 | Status | Count |
 |---|---|
-| available (codeable, not set yet) | 27 |
-| already on | 35 |
-| not in this car's coding (needs hardware or the function is missing) | 15 |
-| risky (safety / legal / drivetrain) | 4 |
-| **Total** | **81** |
+| already on | 53 |
+| can code | 42 |
+| needs hardware | 14 |
+| not in this car's software | 5 |
+| risky (safety / legal / drivetrain) | 6 |
+| **Total** | **120** |
 
-### Best 10 to try
+Single-press mirror fold and factory remote start are listed only under "Not possible" at the end (not counted here).
 
-1. **HUD turn signals**: KOMBI `BLINKER_HUD_ENABLE` + `HUD_BLINKER_ENABLE` = aktiv.
-2. ~~Sport displays in iDrive~~: already on (Adi, 2026-11-23).
-3. **Fogs off when the high beam is on**: FRM `NSW_AUS_BEI_FL` = aktiv.
-4. **Auto wipers stay on after a restart**: SZL `WIPER_MEMORY_DURATION` = Unendlich.
-5. **Earlier low-fuel warning**: KOMBI `TNK_SCHWELLE_RESERVE` = 10_liter.
-6. **No camera warning text**: HU_NBT `MACRO_CAM_LEGALDISCLAIMER` = kein_ld.
-7. **Video from USB + Xvid**: HU_NBT `API_USB_VIDEO` = first_usb, `ENT_CODEC_XVID` = aktiv.
-8. **Sport Individual mode** (set up your own SPORT): ICM `IcmKod_B_Sportindividualisierbar` = ein.
-9. **Radio turns off when the driver door opens**: CAS `TC_LOGIC_KLR_OFF_DOOR` = aktiv.
-10. **M Performance logo on the cluster at start**: KOMBI `BMW_LOGO` / `MPM_LOGO` = mpm (not proven on the 6WB).
+## Best 15 to code next
 
-Put HU_NBT items into **one** write. Every head-unit write rewrites all its datagroups, and the head unit carries the
-Android Auto mod. CAS writes switch the ignition off at the end, so do them with the engine off.
-
-**Head-unit names need a check.** In some HU_NBT datagroups the name overlay looks shifted: for example, a few ECO_*
-functions show language values. Before writing a HU item, confirm its value list in the GUI.
+| # | Feature | Module: FUNCTION = target | Why |
+|---|---|---|---|
+| 1 | HUD turn signals | KOMBI: `BLINKER_HUD_ENABLE`, `HUD_BLINKER_ENABLE` = aktiv, `HUD_PIA_BLINKER` = aktiv (+ HU `HUD_TURNSIGNAL`) | Arrows in the HUD; KOMBI part is writable now. |
+| 2 | High-beam assist on at every start | FRM: `FLA_AUTO_AKTIV` = automatisch | No more pressing the stalk each trip. |
+| 3 | Fogs off when high beam is on | FRM: `NSW_AUS_BEI_FL` = aktiv | Factory default; less glare. |
+| 4 | Auto wipers stay on after restart | SZL: `WIPER_MEMORY_DURATION` = Unendlich | Rain sensor stays armed. |
+| 5 | Earlier low-fuel warning | KOMBI: `TNK_SCHWELLE_RESERVE` = 10_liter | 7 L is tight for Indian fuel stops. |
+| 6 | Sport Individual | ICM: `IcmKod_B_Sportindividualisierbar` = ein; HU: `MACRO_FDS` = popup_and_config | Sport gearbox with comfort steering, set in iDrive. |
+| 7 | Radio off when driver door opens | CAS: `TC_LOGIC_KLR_OFF_DOOR` = aktiv | Factory default; audio stops when you get out. |
+| 8 | AUTO without A/C compressor | IHKA: `AC_NICHT_EIN_BEI_AUTO` = aktiv | AUTO stops forcing A/C on. Small fuel saving. |
+| 9 | No camera warning text | HU: `MACRO_CAM_LEGALDISCLAIMER` = kein_ld | Camera picture shows at once. |
+| 10 | Video from USB + Xvid | HU: `API_USB_VIDEO` = first_usb, `ENT_CODEC_XVID` = aktiv | Films from a stick (parked; rear screens anytime). |
+| 11 | Phone's own ringtone | HU: `INBAND_RINGING` = aktiv | Hear your phone's ringtone in the car. |
+| 12 | Digital speed inside speedo | KOMBI: `DIGITAL_TACHO_ENABLE` = kmh_kmh | Second digital readout; test, meaning not proven. |
+| 13 | Fuel stop suggestion | HU: `NAVI_FUELSTOP_PROPOSAL` = aktiv | Nav offers a fuel stop when range is low. |
+| 14 | M lap timer | HU: `M_LAPTIMER` = aktiv | Fun track timer; M-car menu, may not show on NBT. |
+| 15 | M Performance start logo | KOMBI: `BMW_LOGO`, `MPM_LOGO` = mpm | Cosmetic; unproven on the 6WB. |
 
 ---
 
-## Lights
+## Lights (FRM, LED modules)
 
-| Feature | What it does | Module: FUNCTION = target (now: current) | Status | Risk |
+| Feature | What it does | Module: FUNCTION = target (now: x) | Status | Risk |
 |---|---|---|---|---|
-| Welcome lights: low beam + fogs | Lights come on at unlock | FRM: WL_FUNKTION_AL, WL_FUNKTION_NSW = soft_on (now: soft_on) | already on | low |
-| Welcome lights: high beam | Adds high beam to the welcome lights | FRM: WL_FUNKTION_FL = soft_on (now: nicht_aktiv) | available | low |
-| Welcome lights with switch in AUTO or ON | When welcome lights may run | FRM: WL_AKTIVIERUNG = LDS_in_A_oder_2 (now: LDS_in_A_oder_2) | already on | low |
-| Flash on lock/unlock | Indicators confirm lock and unlock | FRM: QUITTIERUNGSBLINKEN_FREISCHALTEN = aktiv (now: aktiv) | already on | low |
-| Comfort indicator 3 blinks | Tap the stalk to blink 3 times (1 or 3 only) | FRM: BLINKZYKLEN_ANZAHL_TIPP = dreimal (now: dreimal) | already on | low |
-| Fogs off with high beam | Front fogs switch off while the high beam is on | FRM: NSW_AUS_BEI_FL = aktiv (now: nicht_aktiv) | available | low |
-| Fogs flash with headlight flasher | Front fogs join the flash-to-pass | FRM: FLB_NSW = aktiv (now: nicht_aktiv) | available | medium |
-| DRL brightness | Daytime light strength | FRM: HELLIGKEIT_DRL = wert_01__100% (now: 100%) | already on | low |
-| DRL on by default | Daytime lights, with an iDrive toggle | FRM: DRL_MODUS = tfl_s_ohne_sl, TFL_PIA_DEFAULT = aktiv (now: same) | already on | low |
-| Flashing brake lights on hard stop | Brake lights flash in an emergency stop | FRM: ESS_ERSCHEINUNGSBILD = bremslicht blinkend (now: same) | already on | low |
-| Brake force display (bigger area) | Lights up more of the tail lamp when braking hard, instead of flashing | FRM: ESS_ERSCHEINUNGSBILD = flaechenvergroesserung (now: bremslicht blinkend) | available | medium |
-| Hazards after emergency braking | Hazards come on after a hard stop | no separate function found in FRM 0000106D | not in this car's coding | low |
-| Interior light soft fade | Interior lights fade in and out | FRM: IB_SOFT_ON_ENABLE = aktiv (now: aktiv) | already on | low |
+| Welcome lights: low beam + fogs | Lights come on when you unlock. | FRM: `WL_FUNKTION_AL`, `WL_FUNKTION_NSW` = soft_on (now: soft_on) | already on (car-tested) | low |
+| Welcome lights: tail, plate, position | Rear and side lights join the welcome. | FRM: `WL_FUNKTION_KZL`/`SSL`/`POL` = hard_on (now: hard_on) | already on | low |
+| Welcome lights: high beam | Adds high beam to the welcome. | FRM: `WL_FUNKTION_FL` = soft_on (now: nicht_aktiv) | can code | low |
+| Welcome lights trigger | Works with light switch in AUTO. | FRM: `WL_AKTIVIERUNG` = LDS_in_A_oder_2 (now: same) | already on | low |
+| Home lights 40 s | Lights stay on after you lock (flash stalk). | FRM: `FOMEHO_DEFAULT` = 0x28 = 40 s (now: 0x28; only 20/40 s) | already on | low |
+| Lock/unlock flash | Indicators blink on lock and unlock. | FRM: `QUITTIERUNGSBLINKEN_FREISCHALTEN` = aktiv (now: aktiv) | already on | low |
+| One-touch indicator 3 blinks | Tap stalk: 3 blinks (1 or 3 only). | FRM: `BLINKZYKLEN_ANZAHL_TIPP` = dreimal (now: dreimal) | already on | low |
+| Fogs off with high beam | Front fogs switch off while high beam is on. | FRM: `NSW_AUS_BEI_FL` = aktiv (now: nicht_aktiv) | can code | low |
+| Fogs join headlight flasher | Fogs flash with flash-to-pass. | FRM: `FLB_NSW` = aktiv (now: nicht_aktiv) | can code | low |
+| High-beam assist auto at start | HBA is on each time you start. | FRM: `FLA_AUTO_AKTIV` = automatisch (now: manuel) | can code | low |
+| DRL on, iDrive toggle | Daytime lights (LED rings), switchable in iDrive. | FRM: `DRL_MODUS` = tfl_s_ohne_sl, `TFL_PIA_DEFAULT` = aktiv (now: same) | already on | low |
+| DRL brightness | Strength of the daytime rings. | FRM: `HELLIGKEIT_DRL` = 100 % (now: 100 %; 50/80 % possible) | already on | low |
+| Cornering light in reverse | Both cornering lights on when reversing. | FRM: `C_CLC_REV_ALWAYS_ON` = F07/7er_LCI (now: same) | already on | low |
+| Flashing brake lights | Brake lights flash 5 Hz in an emergency stop. | FRM: `ESS_ERSCHEINUNGSBILD` = bremslicht blinkend, `ESS_ECE_BLINKFREQUENZ` = 5_hz (now: same) | already on | low |
+| Hazards after emergency stop | Hazards come on after a hard stop. | FRM: `WB_GB_ENABLE` = aktiv (now: aktiv). First version missed this | already on (not car-tested) | low |
+| Brake force display (bigger area) | Lights more of the tail lamp instead of flashing. | FRM: `ESS_ERSCHEINUNGSBILD` = flaechenvergroesserung (now: bremslicht blinkend) | risky (legal grey) | medium |
+| Corona as parking light / brightness | Change ring brightness as parking light. | FRM: `POS_LICHT_BEI_SL` (now: 0x64, single value); LED_L/R tables | not in this car's software (no menu value) | medium |
 
-## Mirrors, locks, windows, key
+## Locks, windows, mirrors, key (CAS, FRM)
 
-| Feature | What it does | Module: FUNCTION = target (now: current) | Status | Risk |
+| Feature | What it does | Module: FUNCTION = target (now: x) | Status | Risk |
 |---|---|---|---|---|
-| Fold mirrors on comfort close | Hold lock on the key: windows close and mirrors fold | FRM: ASP_BEIKLAPPEN_BEI_KOMFORTSCHLIESSEN = aktiv; CAS: KOMFORTSCHLIESSUNG_FB = aktiv (now: both aktiv) | already on | low |
-| Comfort close from door handle | Hold the handle's lock area: windows close, mirrors fold | CAS: KOMFORTSCHLIESSUNG_PA = aktiv (now: aktiv) | already on | medium |
-| Fold mirrors on a single lock press | Mirrors fold on every lock | no such function in CAS 0000000F / FRM 0000106D | not in this car's coding | low |
-| Comfort open with key | Hold unlock: windows (and sunroof) open | CAS: KOMFORTOEFFNUNG_FB = aktiv (now: aktiv) | already on | low |
-| Passenger mirror dips in reverse | Kerb view when reversing | FRM: ASP_BORDSTEINAUTOMATIK = aktiv (now: aktiv) | already on | low |
-| Lock horn chirp | Short horn beep on lock | CAS: CLM_HORN_AT_SECURE = Aktiv + HU_NBT: ACOUSTICAL_LOCK_CONFIRM = aktiv (now: both set). Tested 2026-11-23: no chirp | not in this car's coding (needs alarm siren) | medium |
-| Lock chirp by faking an alarm | FZD thinks an alarm is fitted | FZD: DWA verbaut + Akkustische Quittierung Schaerfen = aktiv (now: nicht aktiv, restored) | not in this car's coding (tried, no sound) | medium |
-| Horn if locked with engine running | Warns you that you left the engine running | CAS: HUPEN_BEI_FZG_SICHERN_IN_N = aktiv (now: aktiv) | already on | low |
-| Auto-lock when driving off | Locks doors at speed | CAS: VERRIEGELN_XKMH_DEFAULT = aktiv (now: nicht_aktiv). The iDrive menu exists (HU_NBT DOOR_LOCK_AFTER_DRIVING_AWAY = aktiv), so tick it there | already on (iDrive setting) | low |
-| Relock if no door opened | Re-locks after unlock with no door opened | CAS: VER_AUT_X_MIN_DEFAULT = aktiv (now: aktiv) | already on | low |
-| Unlock driver door first | First press opens only the driver door | CAS: SEL_ZV_SENDER_DEFAULT = aktiv (now: nicht_aktiv); also in iDrive | available | low |
-| Radio off when driver door opens | iDrive/audio shuts off when you get out | CAS: TC_LOGIC_KLR_OFF_DOOR = aktiv (now: nicht_aktiv) | available | medium |
-| Key 4th button: parked ventilation | Headlight button starts the blower | CAS: BELEGUNG_DER_4_IDG-TASTE = standkuehlen; IHKA: STANDKUEHLEN = aktiv; HU_NBT: KEY_CONF_COMFORT_COOLING = aktiv (now: all set) | already on (not car-tested) | medium |
-| Key 3rd button | Unlocks and opens the boot | CAS: BELEGUNG_3_IDG_TASTE = entriegeln-grosse-heckklappe_oeffnen (now: same) | already on | low |
-| Easy entry (seat slides back) | Seat moves back when the door opens | CAS: EINSTIEGSHILFE (now: nicht_aktiv). No seat module on this car | not in this car's coding | low |
-| Remote engine start | Start the engine from the key | CAS: MOTORFERNSTART_GENERELL/_CAN, REMOTE_KEY_SPECIAL_FCT; FZD: Motorfernstart (now: off) | not in this car's coding (needs G-series SA 1CR) | high |
+| Comfort close by key (windows + mirrors) | Hold lock: windows/roof close, mirrors fold. | CAS: `KOMFORTSCHLIESSUNG_FB` = aktiv; FRM: `ASP_BEIKLAPPEN_BEI_KOMFORTSCHLIESSEN` = aktiv (now: both) | already on (car-tested) | low |
+| Comfort close at door lock | Hold the lock in the door handle. | CAS: `KOMFORTSCHLIESSUNG_PA` = aktiv (now: aktiv) | already on | low |
+| Comfort open by key | Hold unlock: windows and roof open. | CAS: `KOMFORTOEFFNUNG_FB` = aktiv (now: aktiv) | already on | low |
+| Mirror dips in reverse | Passenger mirror tilts to the kerb. | FRM: `ASP_BORDSTEINAUTOMATIK` = aktiv (now: aktiv) | already on | low |
+| Unlock driver door first | First press opens only the driver door. | CAS: `SEL_ZV_SENDER_DEFAULT` = aktiv (now: nicht_aktiv). Also an iDrive setting | can code (or set in iDrive) | low |
+| Auto-lock when driving off | Locks at speed. | CAS: `VERRIEGELN_XKMH_DEFAULT` (now: nicht_aktiv); HU menu `DOOR_LOCK_AFTER_DRIVING_AWAY` = aktiv | already on (iDrive setting) | low |
+| Auto-lock speed | Speed at which it locks. | CAS: `VERRIEGELUNGSSCHWELLE` = 0x08 (now: 0x10; meaning of units not proven) | can code | low |
+| Re-lock if no door opened | Re-locks after an unlock with no door opened. | CAS: `VER_AUT_X_MIN_DEFAULT` = aktiv (now: aktiv) | already on | low |
+| Horn if locked with engine running | Warns you left it running. | CAS: `HUPEN_BEI_FZG_SICHERN_IN_N` = aktiv (now: aktiv) | already on | low |
+| Radio off when driver door opens | Audio and iDrive stop when you get out. | CAS: `TC_LOGIC_KLR_OFF_DOOR` = aktiv (now: nicht_aktiv) | can code | low |
+| Start/stop off when locking | Start/stop state reset on lock. | CAS: `CLM_MSA_OFF_AT_SECURE` (now: Nicht_Aktiv) | can code (low value) | low |
+| Key 3rd button | Unlocks and opens the boot. | CAS: `BELEGUNG_3_IDG_TASTE` = entriegeln-grosse-heckklappe_oeffnen (now: same) | already on | low |
+| Key 4th button = parked ventilation | Headlight-symbol button runs the blower. | CAS: `BELEGUNG_DER_4_IDG-TASTE` = standkuehlen; IHKA `STANDKUEHLEN`; HU `KEY_CONF_COMFORT_COOLING` (now: all set) | already on (car-tested; blocked at low battery) | low |
+| Key 4th button = home lights | Alternative: button switches on home lights. | CAS: `BELEGUNG_DER_4_IDG-TASTE` = heimleuchten (now: standkuehlen) | can code (replaces ventilation) | low |
 
-## Engine, start/stop, driving modes
+## Cluster (KOMBI, 6WB)
 
-| Feature | What it does | Module: FUNCTION = target (now: current) | Status | Risk |
+| Feature | What it does | Module: FUNCTION = target (now: x) | Status | Risk |
 |---|---|---|---|---|
-| Start/stop remembers last choice | Off stays off after a restart | CAS: TC_MSA_MEMORY = aktiv (now: aktiv) | already on | medium |
-| Start/stop off by default | Starts with auto start/stop off (not needed now memory is on) | CAS: TC_MSA_DEFAULT_OFF = aktiv (now: nicht_aktiv) | available | medium |
-| Sport Individual | Lets you set up SPORT (engine/gearbox/steering) in iDrive | ICM: IcmKod_B_Sportindividualisierbar = ein (now: aus) | available | medium |
-| Start in ECO PRO | Car always starts in ECO PRO | ICM: IcmKod_B_InitEco = verbaut (now: nicht_verbaut) | available | medium |
-| SPORT+ mode | Extra driving mode | Already on (confirmed by Adi in the car). Comes from the vehicle order (M Sport / 2TB), not a single coding switch | already on | low |
-| Auto Hold | Holds the car at a stop | DSC: Funktion_AutomaticHold_aktiv = aktiv (now: aktiv) | already on | low |
-| Launch control | Gearbox launch function | EGS: LC = aktiv (now: aktiv) | already on | high |
-| Top speed limiter | Changes the DME speed limit | DME: VMAX (now: 255) | risky — leave alone | high |
+| Digital speed in trip computer | km/h readout in the trip list. | KOMBI: `BC_DIGITAL_V` = aktiv (now: aktiv) | already on (car-tested) | low |
+| Digital speed inside speedo | Second digital speed field. | KOMBI: `DIGITAL_TACHO_ENABLE` = kmh_kmh (now: keine_anzeige_kmh) | can code (test; meaning unproven) | low |
+| Speedo zoom | Zoomed speedo scale in ECO/city. | KOMBI: `LUPE_TACHO_ENABLE` = aktiv (now: aktiv) | already on | low |
+| Fuel economy in km/l | Consumption unit. | KOMBI: `VERBRAUCH` = km_l (now: km_l) | already on (car-tested) | low |
+| Earlier low-fuel warning | Reserve warning at more litres. | KOMBI: `TNK_SCHWELLE_RESERVE` = 10_liter (now: 7_liter; up to 14) | can code | low |
+| Range warning | Check Control at this range. | KOMBI: `CC_RW_WARNUNG` = 50_km (now: 50_km) | already on | low |
+| 120 km/h warning chime | Gong above 120 km/h. | KOMBI: `WARNUNG_GESCHW_LIMIT` = 120km/h (now: nicht_aktiv) | can code | low |
+| Reverse gear chime | Gong when R is engaged. | KOMBI: `R_GANG_AKUSTIK_ENABLE` = aktiv (now: nicht_aktiv) | can code (low value) | low |
+| Gear in S/M mode | Shows S1..S8 / M1..M8. | KOMBI: `SPA_IST_GANG_ENABLE` = aktiv (now: aktiv) | already on | low |
+| Gear number in D (D1..D8) | Gear number while in D. | no F10 switch found (forums agree D stays "D") | not in this car's software | low |
+| Sport displays (cluster side) | Cluster part of sport displays. | KOMBI: `SPA_SPORT_ENABLE` = aktiv; DME `SPA` = ON (now: both) | already on (car-tested) | low |
+| M Performance start logo | MPM logo at cluster start. | KOMBI: `BMW_LOGO`, `MPM_LOGO` = mpm (now: bmw) | can code (unproven on 6WB) | low |
+| M Performance display mode | MPM cluster display. | KOMBI: `MPM_ENABLE` = aktiv (now: nicht_aktiv) | can code (experimental) | medium |
+| Speedo scale end | 260 / 300 / 330 km/h dial end. | KOMBI: `TACHO_SKALA_ENDWERT` (now: 260 km/h) | can code (cosmetic; dial may look wrong) | medium |
+| Shift lights | M-car shift lights. | KOMBI: `SHIFT_LIGHTS_ENABLE` (now: aktiv) — no visible effect on 530d | already on (no effect) | low |
+| M5-style cluster | Cluster as M variant. | KOMBI: `M_VARIANTE` = motorsport (now: ag_variante) | risky (wrong scales/redline) | high |
+| Needle sweep at start | Needles sweep at start-up. | no sweep function in KOMBI 00001060 | not in this car's software | low |
 
-## Cluster and HUD
+## Head-up display (KOMBI + HU_NBT, SA 610)
 
-| Feature | What it does | Module: FUNCTION = target (now: current) | Status | Risk |
+| Feature | What it does | Module: FUNCTION = target (now: x) | Status | Risk |
 |---|---|---|---|---|
-| Digital speed in trip computer | km/h readout in the trip computer list | KOMBI: BC_DIGITAL_V = aktiv (now: aktiv) | already on | low |
-| Fuel economy in km/l | Consumption unit | KOMBI: VERBRAUCH = km_l (now: km_l) | already on | low |
-| Digital speed in speedometer | Digital speed inside the dial | KOMBI: DIGITAL_TACHO_ENABLE = kmh_kmh (now: keine_anzeige_kmh); meaning not confirmed, test it | available | low |
-| HUD turn signals | Indicator arrows in the HUD | KOMBI: BLINKER_HUD_ENABLE = aktiv, HUD_BLINKER_ENABLE = aktiv (now: both nicht_aktiv) | available | low |
-| HUD music and phone lists | Lists from the steering wheel shown in HUD | KOMBI: HUD_ENTERTAINMENT_ENABLE = aktiv; HU_NBT: HUD_ENTERTAINMENTLIST = aktiv (now: aktiv) | already on | low |
-| HUD speed-limit signs | Road signs in the HUD | KOMBI: HUD_SLI_ENABLE (now: nicht_aktiv). Needs the KAFAS camera | not in this car's coding | low |
-| HUD lane-change warning | Blind-spot warning in the HUD | KOMBI: HUD_TLC_ENABLE (now: nicht_aktiv). Needs the lane-change radar | not in this car's coding | low |
-| M Performance start logo | Cluster shows the M Performance logo at start | KOMBI: BMW_LOGO = mpm, MPM_LOGO = mpm (now: bmw) | available (not proven on 6WB) | low |
-| M Performance display mode | M Performance cluster displays | KOMBI: MPM_ENABLE = aktiv (now: nicht_aktiv) | available (not proven on 6WB) | medium |
-| M5-style cluster | Cluster shows as the M5 variant | KOMBI: M_VARIANTE = motorsport (now: ag_variante). Scales/redline may be wrong | risky | high |
-| Earlier low-fuel warning | Reserve warning at more litres | KOMBI: TNK_SCHWELLE_RESERVE = 10_liter (now: 7_liter; up to 14) | available | low |
-| Range warning | Check Control message at this range | KOMBI: CC_RW_WARNUNG = 50_km (now: 50_km) | already on | low |
-| 120 km/h warning chime | Chime above 120 km/h | KOMBI: WARNUNG_GESCHW_LIMIT = 120km/h (now: nicht_aktiv) | available | low |
-| Outside-temperature warning | Check Control on low outside temp (meaning not confirmed) | KOMBI: CC_TEMPERATURWARNUNG = aktiv (now: nicht_aktiv) | available | low |
-| Sport display support (cluster) | Cluster side of sport displays | KOMBI: SPA_SPORT_ENABLE = aktiv; DME: SPA = ON (now: both on) | already on | low |
-| Date format | dd.mm.yy | KOMBI: DATUM = tt_mm_jj (now: tt_mm_jj) | already on | low |
-| Blank line in trip computer | Lets the trip computer show nothing | KOMBI: BC_LEERZEILE = aktiv (now: aktiv) | already on | low |
-| Needle sweep at start | Needles sweep at start-up | no such function in KOMBI 00001060 | not in this car's coding | low |
+| HUD turn signals | Indicator arrows in the HUD. | KOMBI: `BLINKER_HUD_ENABLE`, `HUD_BLINKER_ENABLE` = aktiv, `HUD_PIA_BLINKER` = aktiv; HU: `HUD_TURNSIGNAL` = aktiv (now: all off) | can code | low |
+| HUD nav arrows | Turn arrows in the HUD. | KOMBI: `HUD_NAVI_ENABLE` = aktiv (now: aktiv) | already on | low |
+| HUD music/phone lists | Steering-wheel lists in the HUD. | KOMBI: `HUD_ENTERTAINMENT_ENABLE`; HU `HUD_ENTERTAINMENTLIST` (now: aktiv) | already on | low |
+| HUD Check Control | Warnings shown in the HUD. | KOMBI: `HUD_CC_ENABLE` = aktiv (now: aktiv) | already on | low |
+| HUD ECO PRO hints | ECO PRO info in the HUD. | KOMBI: `HUD_ECO_PRO` = aktiv (now: aktiv) | already on | low |
+| HUD rotation / height memory | HUD angle setting, saved per key. | KOMBI: `ROTATION_HUD_ENABLE`, `HUD_SMEMORY_ENABLE` = aktiv (now: aktiv) | already on | low |
+| HUD M-style (rpm, gear) | M-car HUD view. | KOMBI: `HUD_PIA_M_SPORT` = aktiv (now: inaktiv); HU `HUD_M` (now: aktiv) | can code (experimental; may show nothing) | low |
+| HUD junction view | Lane/junction picture in HUD. | HU: `JUNCTION_VIEW_HUD` = aktiv (now: nicht_aktiv) | can code (needs map data; unproven) | low |
+| HUD speed-limit signs | Road signs in HUD. | KOMBI: `HUD_SLI_ENABLE` (now: nicht_aktiv) | needs hardware (KAFAS camera 5AG/5AS) | low |
+| HUD lane-change warning | Blind-spot warning in HUD. | KOMBI: `HUD_TLC_ENABLE` (now: nicht_aktiv) | needs hardware (lane-change radar 5AG) | low |
 
-## iDrive (head unit, HU_NBT)
+## iDrive / head unit (HU_NBT) — "now" values unconfirmed
 
-| Feature | What it does | Module: FUNCTION = target (now: current) | Status | Risk |
+| Feature | What it does | Module: FUNCTION = target (now: x) | Status | Risk |
 |---|---|---|---|---|
-| Sport displays | Power/torque pages in iDrive | Already on (confirmed by Adi). HU_NBT SPA_CHECKBOX is off but is not what turns them on | already on | low |
-| Sport display line colour | Sport-coloured lines | HU_NBT: COLOUR_SWITCH_LINES = sport (now: nicht_aktiv); meaning not confirmed | available | medium |
-| No camera warning | Drops the warning text on the camera view | HU_NBT: MACRO_CAM_LEGALDISCLAIMER = kein_ld (now: ld_mit_timeout) | available | medium |
-| No start-up warning | No legal text at start | HU_NBT: LEGAL_DISCLAIMER_TIME = kein_ld (now: kein_ld) | already on | low |
-| Video from USB | Play video files from USB | HU_NBT: API_USB_VIDEO = first_usb (now: none) | available | medium |
-| Extra video codecs | Xvid and VCD playback | HU_NBT: ENT_CODEC_XVID = aktiv, ENT_CODEC_VCD = aktiv (now: nicht_aktiv) | available | medium |
-| Video in motion | Video while driving | HU_NBT: SPEEDLOCK_X_KMH_MIN (now: nicht_aktiv), VIDEO_FRONT_LOCKED (now: nicht_aktiv); SPEEDLOCK_X_KMH_MAX is fixed FF. Names here may be shifted | risky (illegal while driving; verify first) | high |
-| Start-up screen type | Animation, splash or black | HU_NBT: STARTUP_TYPE = splash/black (now: animation) | available | medium |
-| Start-up emblem | Other start emblem (unknown images; M logo not expected on original NBT) | HU_NBT: STARTUP_EMBLEM = variant_01..09 (now: variant_00) | available (experimental) | medium |
-| Ringtone | BMW, MINI or Rolls-Royce ringtone | HU_NBT: RINGTONE = rr (now: bmw) | available | low |
-| Service history | Service history page | HU_NBT: SERVICE_HISTORY = aktiv (now: aktiv) | already on | low |
-| Lock-confirm sound menu | iDrive tick for the lock chirp | HU_NBT: ACOUSTICAL_LOCK_CONFIRM = aktiv (now: aktiv) | already on | low |
-| Lock after driving off menu | iDrive tick for auto-lock | HU_NBT: DOOR_LOCK_AFTER_DRIVING_AWAY = aktiv (now: aktiv) | already on | low |
-| Volume popup / xView / max start volume | BimmerCode NBT options | not found in HU_NBT 00000DED v003.012.025 | not in this car's coding | low |
+| Sport displays | Power and torque gauges in iDrive. | HU: `EFF_DYN_SPORT_UNIT` = aktiv (now: aktiv); set by FA (609 + 337/2TB) | already on (car-tested) | low |
+| Sport display red/M colour | M-style colours on sport pages. | HU: `M_VEHICLE` = aktiv (now: nicht_aktiv) | can code (F15 sheet; unproven on NBT) | medium |
+| Sport Individual menu | Configure SPORT in iDrive (see Driving). | HU: `MACRO_FDS` = popup_and_config (now: only_popup) | can code (with ICM) | medium |
+| M lap timer | Lap timer app. | HU: `M_LAPTIMER` = aktiv (now: nicht_aktiv) | can code (experimental) | low |
+| No camera warning | No legal text on the camera view. | HU: `MACRO_CAM_LEGALDISCLAIMER` = kein_ld (now: ld_mit_timeout) | can code | low |
+| No start-up warning | No legal text at start. | HU: `LEGAL_DISCLAIMER_TIME` = kein_ld (now: kein_ld) | already on | low |
+| Video from USB | Play video files from USB. | HU: `API_USB_VIDEO` = first_usb (now: none) | can code | medium |
+| Xvid / VCD codecs | More file types play. | HU: `ENT_CODEC_XVID`, `ENT_CODEC_VCD` = aktiv (now: nicht_aktiv) | can code | medium |
+| Video in motion | Front video while driving. | HU: `SPEEDLOCK_X_KMH_MIN` = deaktivierung_bmw, `VIDEO_FRONT_LOCKED` = nicht_aktiv (now: nicht_aktiv) | risky (illegal while driving; HU labels may be shifted) | high |
+| Full message text while driving | Show whole SMS/email texts on the move. | HU: `PIM_DRIVING_TEXT_LENGTH` = whole_text (now: one_page) | risky (distraction) | medium |
+| Start-up screen | Animation, splash or black. | HU: `STARTUP_TYPE` = splash/black (now: animation) | can code | low |
+| Start-up emblem | Other start images (unknown pictures). | HU: `STARTUP_EMBLEM` = variant_01..09 (now: variant_00) | can code (experimental) | low |
+| Phone's own ringtone | Ringtone from the phone, not BMW's. | HU: `INBAND_RINGING` = aktiv (now: nicht_aktiv) | can code | low |
+| Car ringtone | BMW, MINI or Rolls-Royce ringtone. | HU: `RINGTONE` = rr (now: bmw) | can code | low |
+| Gong sound set | BMW, MINI, RR or BMW i system gongs. | HU: `SOUND_SIGNAL_SET` = rolls_royce (now: bmw) | can code (experimental) | low |
+| Two phones at once | Two Bluetooth phones connected. | HU: `TWO_PHONES_PARALLEL` = aktiv (now: aktiv) | already on | low |
+| Service history page | Service records in iDrive. | HU: `SERVICE_HISTORY` = aktiv (now: aktiv) | already on | low |
+| Fuel stop suggestion | Nav proposes a fuel stop on low range. | HU: `NAVI_FUELSTOP_PROPOSAL` = aktiv (now: nicht_aktiv) | can code | low |
+| Junction view on map | Lane picture at motorway exits. | HU: `BMAP_JUNCTION_VIEW` = aktiv (now: nicht_aktiv) | can code (map data dependent) | low |
+| Speed limits from map (no camera) | Map-based limit sign in iDrive/cluster. | HU: `SLI_NAVI_DISPLAY` = aktiv (now: nicht_aktiv) | can code (experimental; India map data weak) | low |
+| Climate AUTO intensity menu | Choose AUTO blower strength in iDrive. | HU: `HVAC_AUTOMATIC_INTENSITY` = aktiv (now: nicht_aktiv) | can code (needs IHKA support; unproven) | low |
+| Max start-up volume | Cap on volume at start. | HU: `VOL_MAX_ON` (now: standard, single value) | not in this car's software | low |
+| Tyre pressure screen | Pressures and temperatures. | HU: `RDC_SAFETY` (now: nicht_aktiv) | needs hardware (RDC sensors, SA 2VB) | low |
+| Lane departure / collision menus | KAFAS warning settings. | HU: `LANE_DEPARTURE_WARNING`; FRM `SPURVERLASSENS_WARNUNG` (now: off) | needs hardware (KAFAS 5AS/5AG) | low |
 
-## Climate
+## Driving: modes, gearbox, start/stop (ICM, EGS, DSC, CAS, DME)
 
-| Feature | What it does | Module: FUNCTION = target (now: current) | Status | Risk |
+| Feature | What it does | Module: FUNCTION = target (now: x) | Status | Risk |
 |---|---|---|---|---|
-| Climate remembers OFF | Off stays off after a restart | IHKA: OFF_MEMORY = aktiv (now: aktiv) | already on | low |
-| Recirculation memory | Recirc state kept after a restart | IHKA: MEMORY_UMLUFT = aktiv (now: aktiv) | already on | low |
-| AUTO without A/C | Pressing AUTO does not switch A/C on | IHKA: AC_NICHT_EIN_BEI_AUTO = aktiv (now: nicht_aktiv) | available | low |
-| Temperature offset | Shifts the cabin temperature reading | IHKA: TEMPERATUR_OFFSET = minus1K etc. (now: plus0K) | available | low |
-| Parked ventilation | Blower runs with the engine off | IHKA: STANDLUEFTEN = aktiv (now: aktiv) | already on | low |
-| Seat heating | Heated seats | IHKA: SITZHEIZUNG (now: nicht_aktiv). No heaters or seat module | not in this car's coding | low |
+| SPORT+ mode | Sharper gearbox/throttle, looser DSC. | ICM: `C_Anpassung_FES_Modus` = FES_verbaut (now: same); from FA (337 + 2TB) | already on (car-tested) | low |
+| ECO PRO mode | Fuel-saving mode with coasting. | ICM: `IcmKod_B_ECONOMIC` = verbaut (now: verbaut) | already on | low |
+| ECO PRO coasting | Gearbox decouples when you lift off in ECO PRO. | EGS: `Segeln` = aktiv; DME `Segeln` = ON (now: on) | already on | low |
+| Sport Individual | Your own SPORT mix in iDrive. | ICM: `IcmKod_B_Sportindividualisierbar` = ein (now: aus) + HU `MACRO_FDS` | can code | medium |
+| Start in ECO PRO | Car always starts in ECO PRO. | ICM: `IcmKod_B_InitEco` = verbaut (now: nicht_verbaut) | can code | medium |
+| Paddles | Shift paddles on the wheel. | SZL: `Lenkrad_Schaltpaddles` = aktiv; ICM `IcmKod_B_S2TBA` = verbaut (now: both) | already on | low |
+| Launch control | Gearbox launch start (DSC off, SPORT, brake + full throttle). | EGS: `LC` = aktiv; DSC `Funktion_LaunchControl_aktiv` = aktiv (now: both) | already on (coding; not car-tested) | high (drivetrain wear) |
+| Start/stop remembers off | Off stays off after restart. | CAS: `TC_MSA_MEMORY` = aktiv (now: aktiv) | already on (car-tested) | low |
+| Start/stop off by default | Starts with start/stop off. | CAS: `TC_MSA_DEFAULT_OFF` = aktiv (now: nicht_aktiv). Not needed with memory | can code | low |
+| Auto Hold | Holds the car at a stop. | DSC: `Funktion_AutomaticHold_aktiv` = aktiv (now: aktiv) | already on | low |
+| Brake drying, brake standby | Wipes discs in rain, pre-fills brakes. | DSC: `Funktion_Trockenbremsen_aktiv`, `Funktion_Bremsbereitschaft_aktiv` = aktiv (now: aktiv) | already on | low |
+| Hill start assist | Holds on hills briefly. | DSC: `Funktion_Anfahrassistent_aktiv` = aktiv (now: aktiv) | already on | low |
+| RPA flat-tyre monitor | Warns of a flat from wheel speeds. | DSC: `Funktion_ReifenPannenerkennung_aktiv` = aktiv_RPA (now: same) | already on | low |
+| Hill descent control | Crawls down steep hills. | DSC: `Funktion_HillDecentControl_aktiv` (now: nicht_aktiv). xDrive feature | not in this car's software (RWD) | high |
+| Top speed limiter | DME speed limit. | DME: `VMAX` (now: 255) | risky — leave alone | high |
 
-## Steering wheel, wipers, safety
+## Parking and camera (PDC, TRSVC, HU_NBT)
 
-| Feature | What it does | Module: FUNCTION = target (now: current) | Status | Risk |
+| Feature | What it does | Module: FUNCTION = target (now: x) | Status | Risk |
 |---|---|---|---|---|
-| Auto-wiper memory | Rain sensor stays on after a restart | SZL: WIPER_MEMORY_DURATION = Unendlich (now: 15 Minuten) | available | low |
-| Heated steering wheel | Wheel heating button | SZL: Lenkrad_Heizung (now: nicht aktiv). Needs the heated wheel | not in this car's coding | low |
-| Passenger seatbelt reminder | Chime for the passenger belt | ACSM: SeatBeltReminder_SBR_Beifahrer = aktiv (now: nicht_aktiv). No seat occupancy sensor (SBR_Sensor_Beifahrer_* off) | not in this car's coding | medium |
-| Driver seatbelt chime off | Silences the driver belt warning | ACSM: SeatBeltReminder_SBR_Fahrer = nicht_aktiv (now: aktiv) | risky — not recommended | high |
-| Lane departure / collision warning | KAFAS warnings | FRM: SPURVERLASSENS_WARNUNG, AUFFAHR_WARNUNG_FRONT; HU_NBT: LANE_DEPARTURE_WARNING (now: off). Needs KAFAS | not in this car's coding | medium |
-| RPA flat-tyre monitor | Warns of a flat from wheel speeds | DSC: Funktion_ReifenPannenerkennung_aktiv = aktiv_RPA (now: same) | already on | low |
+| Parking menu | Camera/PDC menu in iDrive. | HU: `MACRO_PDC` = aktiv, `MACRO_L6_PARKMENU` = aktiv (now: aktiv) | already on | low |
+| Auto PDC | PDC pops up when slowly nearing an obstacle. | HU: `AUTO_PDC` = aktiv (now: nicht_aktiv) | can code (needs PDC module support; unproven) | low |
+| Trailer hitch view | Zoomed view of the tow ball. | HU: `MACRO_TRAILER_COUPLING` = aktiv (now: nicht_aktiv) | needs hardware (tow bar 3AC) | low |
+| PDC tones through audio | Beeps over the H/K speakers, left/right. | PDC: `TONAUSGABE_LSP` = keine_Tonausgabe (audio system plays them), `AKUSTIK_RECHTS_LINKS` = aktiv (now: same) | already on | low |
+| Top view / side view | 360 and side cameras. | HU: `PDC_3D`; TRSVC top-view data (now: off) | needs hardware (5DL surround view) | low |
+| Parking assistant | Self-parking. | HU: `MACRO_PMA_EINPARKEN` | needs hardware (5DP) | low |
+
+## Climate (IHKA)
+
+| Feature | What it does | Module: FUNCTION = target (now: x) | Status | Risk |
+|---|---|---|---|---|
+| Climate remembers OFF | Off stays off after restart. | IHKA: `OFF_MEMORY` = aktiv (now: aktiv) | already on (car-tested) | low |
+| Recirculation memory | Recirc kept after restart. | IHKA: `MEMORY_UMLUFT` = aktiv (now: aktiv) | already on | low |
+| A/C state kept at ignition off | A/C button state survives a restart. | IHKA: `AC_AUS_BEI_KL_15_AUS` = nicht_aktiv (now: nicht_aktiv) | already on | low |
+| AUTO without A/C | AUTO does not force the compressor on. | IHKA: `AC_NICHT_EIN_BEI_AUTO` = aktiv (now: nicht_aktiv) | can code | low |
+| Temperature offset | Shifts what "22°" feels like. | IHKA: `TEMPERATUR_OFFSET` = minus1K etc. (now: plus0K) | can code | low |
+| Parked ventilation | Blower runs with the engine off. | IHKA: `STANDLUEFTEN` = aktiv (now: aktiv) | already on (car-tested) | low |
+| Seat heating / ventilation | Heated or cooled seats. | IHKA: `SITZHEIZUNG`, `SITZLUEFTUNG` (now: nicht_aktiv) | needs hardware (494 / 453) | low |
+| Parked heating | Fuel heater. | IHKA: `STANDHEIZUNG` (now: nicht_aktiv) | needs hardware (536) | low |
+
+## Comfort and safety (SZL, ACSM, FZD)
+
+| Feature | What it does | Module: FUNCTION = target (now: x) | Status | Risk |
+|---|---|---|---|---|
+| Auto-wiper memory | Rain sensor stays on after restart. | SZL: `WIPER_MEMORY_DURATION` = Unendlich (now: 15 Minuten) | can code | low |
+| Heated steering wheel | Wheel heating. | SZL: `Lenkrad_Heizung` (now: nicht aktiv) | needs hardware (248 wheel) | low |
+| Passenger seatbelt chime | Chime for passenger belt. | ACSM: `SeatBeltReminder_SBR_Beifahrer` (now: nicht_aktiv) | needs hardware (seat occupancy mat) | medium |
+| Driver seatbelt chime off | Silences driver belt warning. | ACSM: `SeatBeltReminder_SBR_Fahrer` = nicht_aktiv (now: aktiv) | risky (airbag module, safety) | high |
+| Easy entry (seat slides back) | Seat moves back on door open. | CAS: `EINSTIEGSHILFE` (now: nicht_aktiv) | needs hardware (seat module) | low |
+| Lock horn chirp | Short horn on lock. | CAS: `CLM_HORN_AT_SECURE` = Aktiv (now: Aktiv, no sound) | needs hardware (alarm 302) | low |
+
+## Audio and rear entertainment (HU_NBT, AMP, RSE)
+
+| Feature | What it does | Module: FUNCTION = target (now: x) | Status | Risk |
+|---|---|---|---|---|
+| Rear screens video while driving | Rear screens play while moving. | HU: `ENT_RSE_DRIVE` = dvd (now: dvd) | already on | low |
+| Rear max volume step | Volume cap for rear headphones. | HU: `RSE_MAX_VOLUME_STEP` (now: 0x36 of 36/3C) | can code (small change) | low |
+| B&O high-end menu | Speaker light show menu. | HU: `HIGH_END_AUDIO_MENUE` (now: kein_menue) | needs hardware (B&O 6F1) | low |
+
+---
+
+## Needs hardware
+
+| Feature | Missing part / SA |
+|---|---|
+| Lock horn chirp / alarm sounds | Alarm with siren (302). FZD fake-alarm test failed and was reverted. |
+| Tyre pressures and temperatures | RDC wheel sensors (2VB). Car has RPA only. |
+| HUD speed-limit signs, lane / collision warnings | KAFAS camera (5AS/5AG). |
+| HUD lane-change warning | Lane-change radar (5AG). |
+| Comfort access (keyless) | 322 (door handle antennas, CAS search). |
+| Easy entry | Seat module for 459 seats not fitted. |
+| Heated wheel | 248 wheel. |
+| Heated / ventilated seats | 494 / 453. |
+| Parked (fuel) heater | 536. |
+| Passenger belt chime | Seat occupancy mat. |
+| Top / side view, 3D PDC | 5DL surround view. |
+| Parking assistant | 5DP. |
+| Trailer hitch view | Tow bar 3AC. |
+
+## Not possible
+
+| Feature | Why |
+|---|---|
+| Single-press mirror fold | No such function in CAS 0000000F / FRM 0000106D; only hold-lock comfort close (car-tested). |
+| Factory remote engine start | Needs G-series SA 1CR + FSC; switches in CAS/FZD are off and do nothing on F-series. |
+| Gear number in D | No F10 cluster switch; D stays "D". |
+| Needle sweep | No sweep function in KOMBI 00001060 (aftermarket flash only). |
+| Max start-up volume | HU `VOL_MAX_ON` has one value only. |
+| Hill descent control | xDrive only. |
