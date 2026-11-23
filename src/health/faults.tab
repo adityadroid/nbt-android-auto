@@ -1,15 +1,23 @@
-# Fault names for nbt_health: "MODULE DTC text" (DTC = all three bytes, hex). Keep text short (~30 chars).
-# Texts from BMW SGBD fault tables (emdzej docs: d73n57e0, cas4_2, komb01, nbt, frm3, ihka01, zgw_01), shortened.
-DME 24F700 Fuel filter heater circuit open
-CAS 93076B Parked power cut (30B budget)
-CAS 9308A7 Rear remote battery low
-KOMBI B7F67D Cluster watchdog reset
-NBT B7F84D Mic 1 wire open
-NBT B7F884 Head unit flash file error
-NBT B7F8AE Rear screens Ethernet no link
-NBT B7F8E5 SSH mode active (our unlock)
-NBT E1C440 Head unit reset
-FRM 800F93 Home-light repeat lock
-IHKA 8011CE Volume knob stuck
-ZGW 801C15 Did not sleep properly (30B)
-ZGW 801C20 Central fault memory full
+# Fault names for nbt_health: "MODULE DTC short|full text" (DTC = all three bytes, hex). Short ~30 chars, full <200.
+# Texts from BMW SGBD fault tables (emdzej docs: d73n57e0, cas4_2, komb25, nbt, frm3, ihka01, zgw_01, icmql, fla_01),
+# put in plain English (2026-11-23).
+DME 24F700 Fuel filter heater open circuit|DME drives the fuel filter heater but sees an open circuit: broken wire, bad plug or failed heater element on the filter housing. Matters only in cold weather (diesel waxing).
+CAS 93076B Power cut: time limit hit|Info: CAS switched off terminal 30B (switched power) because its max on-time was reached, e.g. car left awake or a long diagnosis session. Protects the battery. Usually ignore.
+CAS 9308A7 Rear remote battery low|The rear-seat remote control (rear entertainment) reports a low battery. Replace its battery. Harmless to the car.
+KOMBI B7F67D Cluster watchdog reset|The cluster's watchdog restarted it after a software hang or voltage dip. One-off is harmless; repeated resets mean a voltage or cluster software problem.
+KOMBI B7F668 Cluster clock was reset|The cluster lost its time, usually after a battery disconnect, a deep voltage drop or a cluster coding reset. Set date and time again. Harmless.
+NBT B7F84D Mic 1 wire open circuit|The head unit sees an open circuit to microphone 1 (hands-free mic in the roof). Real broken wire/plug, or mic not fitted. Matters only if the call mic fails.
+NBT B7F884 Flash file system faulty|The head unit found errors in its internal flash file system. Can follow a crash, power loss during a write, or our file changes. Watch it; if it stays, check the unit.
+NBT B7F8AE Ethernet to rear screens down|The head unit has no Ethernet link to the rear-seat entertainment. Cause: rear unit asleep/booting, cable or plug. Matters only if the rear screens fail.
+NBT B7F8E5 SSH mode active (our unlock)|Logged while the head unit's Telnet/SSH engineering access is on. Expected with our SSH unlock. Harmless.
+NBT E1C440 Head unit reset|The head unit logged a restart. Expected after a reboot, a software install or a crash. Harmless unless it happens by itself often.
+NBT E1C447 MOST unit logged off|A unit on the MOST fibre ring (audio/video network) dropped off. Often from a unit restart (head unit or cluster during our work) or sleep/wake. Matters only if it keeps coming back.
+ICM D016DC Drive-mode message timeout|ICM stopped getting the cluster's driving-mode display message. Usually after a cluster reset (e.g. coding), low battery or bus wake-up. Harmless if it does not return.
+ICM D016E1 Drive-mode message invalid|The cluster's driving-mode display message arrived with an invalid value. Same causes as D016DC (cluster reset, voltage dip). Harmless if one-off.
+ICM D018B5 Cluster status msg timeout|ICM stopped getting the cluster's display status message. Usually from a cluster reset, low battery or bus start-up. Harmless if it does not come back after clearing.
+FRM 800F92 Welcome light repeat lock|Info only: welcome light was triggered too often in a row, so the FRM briefly blocks it to save the battery. Normal when locking/unlocking a lot. Ignore.
+FRM 800F93 Home light repeat lock|Info only: follow-me-home lights were triggered too often in a row, so the FRM briefly blocks them to save the battery. Normal. Ignore.
+FLA 800608 High-beam camera blocked|The high-beam assist camera (behind the mirror) could not see: dirty or fogged windscreen, heavy rain or a sticker. Clears when the view is clear. Harmless if occasional.
+IHKA 8011CE Volume knob button stuck|The on/off-volume knob on the centre panel reports its push button stuck. Dirt or a worn switch. Matters only if the knob stops working.
+ZGW 801C15 Did not sleep properly|The gateway saw the car fail to go to sleep when power switched off (a unit kept the bus awake). Common after diagnosis/coding sessions. Matters if the battery drains.
+ZGW 801C20 Central fault memory full|The gateway's central fault store is full, so new entries may be lost. Clear all fault memories to fix. Harmless itself.

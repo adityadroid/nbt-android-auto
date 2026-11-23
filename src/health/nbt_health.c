@@ -42,6 +42,7 @@
 #define PKG          "/var/opt/hmi/data/rw/NbtAndroidAutoRT"
 #define ACTIVE_FLAG  "/fs/ram3/nbt-health-active"
 #define OUT_FILE     "/fs/ram3/nbt-health.txt"
+#define DETAIL_FILE  "/fs/ram3/nbt-health-detail.txt"   /* DLINES lines per row: the page a row click opens */
 #define LOG_FILE     "/fs/ram3/nbt-health.log"
 #define TABLE_FILE   PKG "/health.tab"
 #define FAULTS_FILE  PKG "/faults.tab"
@@ -51,8 +52,10 @@
                                with the same tester address (car 2026-11-22). Only F4 and F5 are accepted. */
 #define HSFZ_PORT    6801
 #define IDENT_PORT   6811
-#define ROWS         24
+#define ROWS         40
 #define ROW_LEN      48
+#define DLINES       8
+#define MAX_FAULTS   64
 #define MAX_ITEMS    48
 #define MAX_FAULTNAMES 256
 
@@ -68,14 +71,14 @@ static const struct { unsigned char addr; const char *name; } MODULES[] = {
 #define NMOD (int)(sizeof(MODULES) / sizeof(MODULES[0]))
 
 typedef struct {
-    char label[24], unit[8], when[4];
+    char label[24], unit[8], when[4], note[160];
     int obd, module, id, off, len, sgn, dec, route;   /* route: 0 plain, 1 extended session, 2 dynamic DID */
     double factor, add, ok_lo, ok_hi, w_lo, w_hi;
     int has[4];               /* ok_lo ok_hi watch_lo watch_hi present */
     int valid; double value;
 } Item;
 
-typedef struct { char module[8]; unsigned code; char text[40]; } FaultName;
+typedef struct { char module[8]; unsigned code; char text[40], full[200]; } FaultName;
 
 static Item g_items[MAX_ITEMS];
 static int g_n;
@@ -121,8 +124,8 @@ static char *field(char **p) {
 
 static int parse_item(char *line, Item *it) {
     memset(it, 0, sizeof *it);
-    char *p = line, *f[17];
-    for (int i = 0; i < 17; ++i) f[i] = field(&p);
+    char *p = line, *f[18];
+    for (int i = 0; i < 18; ++i) f[i] = field(&p);
     if (!f[0][0] || !f[3][0]) return 0;
     snprintf(it->label, sizeof it->label, "%s", f[0]);
     it->obd = !strcmp(f[1], "obd");
@@ -136,6 +139,7 @@ static int parse_item(char *line, Item *it) {
     for (int i = 0; i < 4; ++i) if (f[11 + i][0]) { *lim[i] = atof(f[11 + i]); it->has[i] = 1; }
     snprintf(it->when, sizeof it->when, "%s", f[15][0] ? f[15] : "any");
     it->route = !strcmp(f[16], "ext") ? 1 : !strcmp(f[16], "dyn") ? 2 : 0;
+    snprintf(it->note, sizeof it->note, "%s", f[17]);
     return it->len > 0 && it->len <= 4;
 }
 
@@ -155,14 +159,17 @@ static void load_tables(const char *table, const char *faults) {
     g_nfn = 0;
     f = fopen(faults, "r");
     if (f) {
-        char line[160];
+        char line[320];
         while (g_nfn < MAX_FAULTNAMES && fgets(line, sizeof line, f)) {
             char mod[8]; unsigned code; int used = 0;
             if (line[0] == '#' || sscanf(line, "%7s %x %n", mod, &code, &used) < 2) continue;
             line[strcspn(line, "\r\n")] = 0;
             snprintf(g_fn[g_nfn].module, sizeof g_fn[g_nfn].module, "%s", mod);
             g_fn[g_nfn].code = code;
+            char *full = strchr(line + used, '|');                  /* "short|full text" */
+            if (full) *full++ = 0;
             snprintf(g_fn[g_nfn].text, sizeof g_fn[g_nfn].text, "%s", line + used);
+            snprintf(g_fn[g_nfn].full, sizeof g_fn[g_nfn].full, "%s", full ? full : line + used);
             g_nfn++;
         }
         fclose(f);
@@ -170,10 +177,21 @@ static void load_tables(const char *table, const char *faults) {
     logf_("table: %d values, %d fault names", g_n, g_nfn);
 }
 
-static const char *fault_text(const char *mod, unsigned code) {
+static const FaultName *fault_name(const char *mod, unsigned code) {
     for (int i = 0; i < g_nfn; ++i)
-        if (g_fn[i].code == code && !strcmp(g_fn[i].module, mod)) return g_fn[i].text;
-    return "";
+        if (g_fn[i].code == code && !strcmp(g_fn[i].module, mod)) return &g_fn[i];
+    return 0;
+}
+
+/* fault areas, in the order the page lists them */
+static const char *AREAS[] = {"Engine", "Chassis", "Body", "Climate", "Electronics"};
+#define NAREA 5
+static int area_of(const char *m) {
+    static const char *map[][2] = {{"DME", "0"}, {"EGS", "0"}, {"EKPS", "0"}, {"DSC", "1"}, {"EPS", "1"}, {"ICM", "1"},
+                                   {"ACSM", "1"}, {"PDC", "1"}, {"CAS", "2"}, {"FRM", "2"}, {"FZD", "2"}, {"FLA", "2"},
+                                   {"IHKA", "3"}};
+    for (unsigned i = 0; i < sizeof map / sizeof map[0]; ++i) if (!strcmp(map[i][0], m)) return map[i][1][0] - '0';
+    return 4;   /* KOMBI, NBT, ZGW */
 }
 
 /* ------------------------------------------------------------------ HSFZ transport */
@@ -288,8 +306,8 @@ typedef struct {
     int link, engine_answer, running;
     long odo_km;
     int faults_read, active, stored;
-    char active_list[ROWS][ROW_LEN];
-    int nactive_rows;
+    struct { char mod[8]; unsigned code; unsigned char st; } fault[MAX_FAULTS];
+    int nfault;
     double faults_at;
 } Health;
 
@@ -351,20 +369,23 @@ static void read_faults(int fd, Health *h) {
     static unsigned char r[4096];
     unsigned char req[3] = {0x19, 0x02, 0xFF};
     int active = 0, stored = 0, answered = 0;
-    h->nactive_rows = 0;
+    h->nfault = 0;
     for (int m = 0; m < NMOD; ++m) {
         int n = uds(fd, MODULES[m].addr, req, 3, r, sizeof r, 4.0);
         if (n < 3 || r[0] != 0x59) continue;
         answered++;
         for (int i = 3; i + 4 <= n; i += 4) {
-            if (r[i + 3] & 0x03) {           /* bit0 failing now, bit1 failed during this drive */
-                active++;
-                if (h->nactive_rows < ROWS) {
-                    unsigned code = ((unsigned)r[i] << 16) | (r[i + 1] << 8) | r[i + 2];
-                    snprintf(h->active_list[h->nactive_rows++], ROW_LEN, "%s %06X %s", MODULES[m].name, code,
-                             fault_text(MODULES[m].name, code));
-                }
-            } else stored++;
+            unsigned char st = r[i + 3];
+            int now = st & 0x03;             /* bit0 failing now, bit1 failed during this drive */
+            if (!now && !(st & 0x08)) continue;   /* only confirmed ones count as stored (car: 1271 entries otherwise) */
+            if (now) active++; else stored++;
+            /* active ones always get a slot; stored ones only fill the first half */
+            if (h->nfault < MAX_FAULTS && (now || h->nfault < MAX_FAULTS / 2)) {
+                snprintf(h->fault[h->nfault].mod, sizeof h->fault[0].mod, "%s", MODULES[m].name);
+                h->fault[h->nfault].code = ((unsigned)r[i] << 16) | (r[i + 1] << 8) | r[i + 2];
+                h->fault[h->nfault].st = r[i + 3];
+                h->nfault++;
+            }
         }
     }
     h->faults_read = answered > 0;
@@ -388,14 +409,44 @@ static int verdict(const Item *it, int running) {
     return V_OK;
 }
 
-static void make_rows(const Health *h, char rows[ROWS][ROW_LEN]) {
-    for (int i = 0; i < ROWS; ++i) rows[i][0] = 0;
+/* word-wrap s into detail lines d[*k..], ROW_LEN-1 wide, at most DLINES lines in all */
+static void wrap(char d[DLINES][ROW_LEN], int *k, const char *s) {
+    while (*s && *k < DLINES) {
+        while (*s == ' ') ++s;
+        int n = (int)strlen(s), cut = n;
+        if (n > ROW_LEN - 1) {
+            cut = ROW_LEN - 1;
+            while (cut > 0 && s[cut] != ' ') --cut;
+            if (cut == 0) cut = ROW_LEN - 1;
+        }
+        snprintf(d[(*k)++], ROW_LEN, "%.*s", cut, s);
+        s += cut;
+    }
+}
+
+static const char *status_text(unsigned char st) {
+    if (st & 0x01) return "Failing right now";
+    if (st & 0x02) return "Failed during this drive";
+    if (st & 0x08) return "Stored from an earlier drive";
+    return "Pending (seen once, not confirmed)";
+}
+
+static void fault_label(const Health *h, int i, char *out, int cap, int full) {
+    const FaultName *fn = fault_name(h->fault[i].mod, h->fault[i].code);
+    snprintf(out, cap, "%s %06X %s", h->fault[i].mod, h->fault[i].code,
+             fn ? (full ? fn->full : fn->text) : (full ? "No name yet (not in faults.tab)" : ""));
+}
+
+static void make_rows(const Health *h, char rows[ROWS][ROW_LEN], char d[ROWS][DLINES][ROW_LEN]) {
+    memset(rows, 0, ROWS * ROW_LEN);
+    memset(d, 0, ROWS * DLINES * ROW_LEN);
     if (!h->link) {
         snprintf(rows[0], ROW_LEN, "No link to the car");
         snprintf(rows[1], ROW_LEN, "(gateway did not answer)");
         return;
     }
-    int r = 1, watch = 0, act = 0;
+    int r = 1, watch = 0, act = 0, k0 = 0;
+    char names[160] = "";
     for (int i = 0; i < g_n && r < ROWS; ++i) {
         const Item *it = &g_items[i];
         if (!it->valid) continue;
@@ -406,22 +457,106 @@ static void make_rows(const Health *h, char rows[ROWS][ROW_LEN]) {
             if (j < i && g_items[j].valid && applies(&g_items[j], h->running)) shown = 1;
         }
         if (shown || (twin && !applies(it, h->running))) continue;
-        int v = verdict(it, h->running);
+        int v = verdict(it, h->running), k = 0;
         if (v == V_WATCH) watch++;
         if (v == V_ACT) act++;
-        snprintf(rows[r++], ROW_LEN, "%s %.*f %s%s%s", it->label, it->dec, it->value, it->unit, v ? "  " : "", VERDICT[v]);
+        if (v >= V_WATCH) {
+            size_t l = strlen(names);
+            snprintf(names + l, sizeof names - l, "%s%s", l ? ", " : "", it->label);
+            if (k0 < DLINES) snprintf(d[0][k0++], ROW_LEN, "%s %.*f %s: %s", it->label, it->dec, it->value, it->unit, VERDICT[v]);
+        }
+        snprintf(rows[r], ROW_LEN, "%s %.*f %s%s%s", it->label, it->dec, it->value, it->unit, v ? "  " : "", VERDICT[v]);
+        snprintf(d[r][k++], ROW_LEN, "%s: %.*f %s", it->label, it->dec, it->value, it->unit);
+        snprintf(d[r][k++], ROW_LEN, "Status: %s", v == V_NONE ? "for information (no limits)" : v == V_OK ? "OK" :
+                 v == V_WATCH ? "watch - outside the normal range" : "ACT - get it checked");
+        if (it->has[0] || it->has[1]) {
+            char lo[24] = "", hi[24] = "";
+            if (it->has[0]) snprintf(lo, sizeof lo, "%.*f", it->dec, it->ok_lo);
+            if (it->has[1]) snprintf(hi, sizeof hi, "%.*f", it->dec, it->ok_hi);
+            snprintf(d[r][k++], ROW_LEN, "Normal: %s%s%s %s", it->has[0] ? lo : "up to ", it->has[0] && it->has[1] ? " to " : it->has[0] ? " or more" : "", hi, it->unit);
+        }
+        if (it->has[2] || it->has[3]) {
+            char lo[24] = "", hi[24] = "";
+            if (it->has[2]) snprintf(lo, sizeof lo, "below %.*f", it->dec, it->w_lo);
+            if (it->has[3]) snprintf(hi, sizeof hi, "above %.*f", it->dec, it->w_hi);
+            snprintf(d[r][k++], ROW_LEN, "Act: %s%s%s %s", lo, it->has[2] && it->has[3] ? " or " : "", hi, it->unit);
+        }
+        if (strcmp(it->when, "any")) snprintf(d[r][k++], ROW_LEN, "Judged with the engine %s", !strcmp(it->when, "run") ? "running" : "off");
+        wrap(d[r], &k, it->note);
+        r++;
     }
-    if (!h->engine_answer && r < ROWS) snprintf(rows[r++], ROW_LEN, "Engine: no answer (ignition on?)");
-    if (h->odo_km >= 0 && r < ROWS) snprintf(rows[r++], ROW_LEN, "Odometer %ld km", h->odo_km);
+    if (!h->engine_answer && r < ROWS) {
+        snprintf(rows[r], ROW_LEN, "Engine: no answer (ignition on?)");
+        snprintf(d[r][0], ROW_LEN, "The engine module did not answer.");
+        snprintf(d[r][1], ROW_LEN, "Switch the ignition on and reopen the page.");
+        r++;
+    }
+    if (h->odo_km >= 0 && r < ROWS) { snprintf(rows[r], ROW_LEN, "Odometer %ld km", h->odo_km); snprintf(d[r][0], ROW_LEN, "Odometer %ld km (from the cluster)", h->odo_km); r++; }
     if (h->faults_read) {
-        if (h->active) watch++;
-        if (r < ROWS) snprintf(rows[r++], ROW_LEN, h->active ? "Faults this drive: %d  watch" : "Faults this drive: none  OK", h->active);
-        for (int i = 0; i < h->nactive_rows && r < ROWS - 1; ++i) snprintf(rows[r++], ROW_LEN, "%s", h->active_list[i]);
-        if (r < ROWS) snprintf(rows[r++], ROW_LEN, "Older faults stored: %d", h->stored);
+        int per[NAREA] = {0}, old[NAREA] = {0};
+        for (int i = 0; i < h->nfault; ++i) (h->fault[i].st & 0x03 ? per : old)[area_of(h->fault[i].mod)]++;
+        if (h->active) {
+            watch++;
+            size_t l = strlen(names);
+            snprintf(names + l, sizeof names - l, "%s%d fault%s", l ? ", " : "", h->active, h->active > 1 ? "s" : "");
+        }
+        if (!h->active && r < ROWS) {
+            snprintf(rows[r], ROW_LEN, "Faults this drive: none  OK");
+            snprintf(d[r][0], ROW_LEN, "No module reported a fault during this drive.");
+            r++;
+        }
+        for (int a = 0; a < NAREA; ++a) {
+            if (!per[a] || r >= ROWS - 1) continue;
+            int k = 0;
+            snprintf(rows[r], ROW_LEN, "%s faults: %d  watch", AREAS[a], per[a]);
+            for (int i = 0; i < h->nfault && k < DLINES; ++i)
+                if (h->fault[i].st & 0x03 && area_of(h->fault[i].mod) == a) fault_label(h, i, d[r][k++], ROW_LEN, 0);
+            r++;
+            for (int i = 0; i < h->nfault && r < ROWS - 1; ++i) {
+                if (!(h->fault[i].st & 0x03) || area_of(h->fault[i].mod) != a) continue;
+                char full[260];
+                fault_label(h, i, rows[r], ROW_LEN, 0);
+                k = 0;
+                snprintf(d[r][k++], ROW_LEN, "%s %06X  (%s)", h->fault[i].mod, h->fault[i].code, AREAS[a]);
+                snprintf(d[r][k++], ROW_LEN, "%s", status_text(h->fault[i].st));
+                const FaultName *fn = fault_name(h->fault[i].mod, h->fault[i].code);
+                snprintf(full, sizeof full, "%s", fn ? fn->full : "No name yet: tell Claude the module and code.");
+                wrap(d[r], &k, full);
+                r++;
+            }
+        }
+        if (r < ROWS) {
+            char by[96] = "";
+            for (int a = 0; a < NAREA; ++a) if (old[a]) {
+                size_t l = strlen(by);
+                snprintf(by + l, sizeof by - l, "%s%s %d", l ? ", " : "", AREAS[a], old[a]);
+            }
+            snprintf(rows[r], ROW_LEN, h->stored ? "Older faults: %d (%s)" : "Older faults: none", h->stored, by);
+            int k = 0;
+            snprintf(d[r][k++], ROW_LEN, "Stored from earlier drives (not active):");
+            for (int i = 0; i < h->nfault && k < DLINES; ++i)
+                if (!(h->fault[i].st & 0x03)) fault_label(h, i, d[r][k++], ROW_LEN, 0);
+            if (!h->stored) snprintf(d[r][0], ROW_LEN, "No older faults stored.");
+            r++;
+        }
     } else if (r < ROWS) snprintf(rows[r++], ROW_LEN, "Faults: reading ...");
-    if (act) snprintf(rows[0], ROW_LEN, "Check: %d to act, %d to watch", act, watch);
-    else if (watch) snprintf(rows[0], ROW_LEN, "Overall: %d to watch", watch);
+    if (act) snprintf(rows[0], ROW_LEN, "ACT: %s", names);
+    else if (watch) snprintf(rows[0], ROW_LEN, "Watch: %s", names);
     else snprintf(rows[0], ROW_LEN, "Overall: all OK");
+    if (!k0 && !h->active) snprintf(d[0][k0++], ROW_LEN, "Every value is in its normal range.");
+    if (h->active && k0 < DLINES) snprintf(d[0][k0++], ROW_LEN, "%d fault%s this drive (see the fault rows)", h->active, h->active > 1 ? "s" : "");
+}
+
+static void write_detail(char d[ROWS][DLINES][ROW_LEN]) {
+    if (g_once) {
+        for (int i = 0; i < ROWS; ++i) for (int k = 0; k < DLINES; ++k) if (d[i][k][0]) printf("    [%d] %s\n", i, d[i][k]);
+        return;
+    }
+    FILE *f = fopen(DETAIL_FILE ".tmp", "w");
+    if (!f) return;
+    for (int i = 0; i < ROWS; ++i) for (int k = 0; k < DLINES; ++k) fprintf(f, "%s\n", d[i][k]);
+    fclose(f);
+    rename(DETAIL_FILE ".tmp", DETAIL_FILE);
 }
 
 static void write_rows(char rows[ROWS][ROW_LEN]) {
@@ -442,7 +577,7 @@ static int page_open(void) {
 }
 
 static void poll_once(const char *gw, Health *h, int faults_due) {
-    char rows[ROWS][ROW_LEN];
+    static char rows[ROWS][ROW_LEN], detail[ROWS][DLINES][ROW_LEN];
     int fd = hsfz_connect(gw);
     h->link = fd >= 0;
     if (fd >= 0) {
@@ -450,8 +585,9 @@ static void poll_once(const char *gw, Health *h, int faults_due) {
         if (faults_due) read_faults(fd, h);
         close(fd);
     }
-    make_rows(h, rows);
+    make_rows(h, rows, detail);
     write_rows(rows);
+    write_detail(detail);
 }
 
 int main(int argc, char **argv) {
