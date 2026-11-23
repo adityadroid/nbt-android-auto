@@ -1,6 +1,6 @@
 // libNbtCarHealth.so - "Car health" entry under Vehicle Info (HMI plugin, /var/opt/hmi/data/rw/Plugins/NbtCarHealth).
 //
-// Opening the entry shows page 10: up to 24 live rows that nbt_health (src/health/nbt_health.c, its own process started by
+// Opening the entry shows page 10: up to 40 live rows that nbt_health (src/health/nbt_health.c, its own process started by
 // boot.sh) writes to /fs/ram3/nbt-health.txt: coolant, battery, engine, intake air, boost, odometer, faults. While the
 // page has focus this plugin refreshes the rows every second and touches /fs/ram3/nbt-health-active, which is what makes
 // nbt_health talk to the car; nothing is asked of the car while the page is closed. Separate from the Android Auto plugin
@@ -40,12 +40,15 @@ private:
 };
 }
 namespace {
-const unsigned kPage=10, kFocus=1, kVisible=11, kRow0=111, kRows=24, kLen=48;
+const unsigned kPage=10, kFocus=1, kVisible=11, kRow0=111, kRows=40, kLen=48;
+// row i is a button opening page kDetail0+i; its kDLines lines (raDataModel kDModel0..) come from nbt_health's detail file
+const unsigned kDetail0=501, kDModel0=201, kDLines=8;
 // car 2026-11-22: leaving the page with MENU sent no focus=false, so polling ran on (and nbt_health kept the car's
 // tester address busy). Polling now also stops when the page stops being visible, and after kMaxPoll seconds.
 const long kMaxPoll=600;
 const char* const kActive="/fs/ram3/nbt-health-active";
 const char* const kOut="/fs/ram3/nbt-health.txt";
+const char* const kDetail="/fs/ram3/nbt-health-detail.txt";
 const char* const kTrying="/fs/ram3/nbt-health-trying";
 const char* const kOff="/var/opt/hmi/data/rw/NbtAndroidAutoRT/health.off";
 const char* const kLog="/fs/ram3/nbt-carhealth.log";
@@ -133,6 +136,31 @@ bool pageFocus(void*,const bmw::Parcel& p) {
 
 // a null delegate object makes the HMI skip the handler (NbtReboot, car 2026-11-12)
 int g_handlerObject=0;
+int g_rowIndex[kRows];   // delegate object of detail page i: tells the shared handler which row was pressed
+
+// fill the detail page from block `row` of the detail file (kDLines lines per row, kRows blocks)
+bool detailFocus(void* obj,const bmw::Parcel& p) {
+    bool focused=false;p.readBool(focused);
+    if(!focused||!g_app||g_off)return true;
+    const int row=*static_cast<int*>(obj);
+    char lines[kDLines][kLen];
+    memset(lines,0,sizeof(lines));
+    static char buf[kRows*kDLines*kLen+64];
+    int fd=open(kDetail,O_RDONLY);
+    ssize_t n=fd>=0?read(fd,buf,sizeof(buf)-1):-1;
+    if(fd>=0)close(fd);
+    unsigned line=0,col=0;
+    const unsigned first=(unsigned)row*kDLines;
+    for(ssize_t i=0;i<n&&line<first+kDLines;++i){
+        char c=buf[i];
+        if(c=='\n'){++line;col=0;continue;}
+        if(line>=first&&c>=' '&&c<127&&col<kLen-1)lines[line-first][col++]=c;
+    }
+    if(n<=0)snprintf(lines[0],kLen,"%s","No details yet: reopen Car health");
+    for(unsigned k=0;k<kDLines;++k)g_app->updateModel(kDModel0+k,lines[k][0]?lines[k]:" ");
+    char what[48];snprintf(what,sizeof(what),"details row %d",row);plog(what);
+    return true;
+}
 bmw::IPluginApp* create(bmw::IDispatcher& d,const char* name,const bmw::Bundle& p,const bmw::Bundle& c) {
     if(g_app)return 0;
     g_app=new bmw::PluginApp(d,bmw::BasicString<char>(name),p,c);
@@ -143,6 +171,11 @@ bmw::IPluginApp* create(bmw::IDispatcher& d,const char* name,const bmw::Bundle& 
     g_app->addHandler(kPage,kFocus,onPage);
     bmw::ActionDelegate onVisible={&g_handlerObject,&pageVisible};
     g_app->addHandler(kPage,kVisible,onVisible);   // type 11 = VISIBLE, as the Android Auto plugin's hold pages use it
+    for(unsigned i=0;i<kRows;++i){
+        g_rowIndex[i]=(int)i;
+        bmw::ActionDelegate onDetail={&g_rowIndex[i],&detailFocus};
+        g_app->addHandler(kDetail0+i,kFocus,onDetail);
+    }
     plog(g_app->start()?"plugin created, started":"plugin created");
     return reinterpret_cast<bmw::IPluginApp*>(g_app);
 }
